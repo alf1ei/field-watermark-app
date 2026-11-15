@@ -1,0 +1,106 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platforms and build-tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-35" "platforms;android-34" \
+            "build-tools;35.0.0" "build-tools;34.0.0"
+
+      - name: Install native deps for node-canvas (devDependency)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Create fresh Capacitor Android project (default icons)
+        # The snapshot excludes binary launcher icons, so regenerate the
+        # Android project from scratch; custom GSZD icons are re-added later.
+        run: |
+          rm -rf android
+          npx cap add android
+          npx cap sync android
+
+      - name: Restore AndroidManifest with camera/location/gallery permissions
+        run: cp android-manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+
+      - name: Setup Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon --console=plain
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 现场水印byccj-1.0.0-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Create Release v1.0.0 with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: 现场水印by ccj v1.0.0
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          fail_on_unmatched_files: true
+
+      - name: Publish APK as base64 chunks (retrieval fallback)
+        continue-on-error: true
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          rm -rf /tmp/b64 && mkdir -p /tmp/b64
+          split -b 900k "$APK" /tmp/b64/chunk-
+          i=0
+          for f in /tmp/b64/chunk-*; do
+            base64 -w 0 "$f" > "/tmp/b64/part-$(printf '%03d' $i).b64"
+            rm "$f"
+            i=$((i+1))
+          done
+          echo "$i" > /tmp/b64/count.txt
+          sha256sum "$APK" > /tmp/b64/sha256.txt
+          ls -l /tmp/b64
+          cd /tmp/b64
+          git init -q -b releases-b64
+          git config user.email "actions@github.com"
+          git config user.name "github-actions"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git add -A
+          git commit -qm "APK base64 chunks v1.0.0"
+          git push -qf origin releases-b64
