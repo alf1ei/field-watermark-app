@@ -1,0 +1,35 @@
+{
+  "dependencies": {
+    "@capacitor-community/media": "^8.0.1",
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/app": "^7.0.2",
+    "@capacitor/camera": "^7.0.2",
+    "@capacitor/core": "^7.4.0",
+    "@capacitor/filesystem": "^7.0.2",
+    "@capacitor/geolocation": "^7.1.4",
+    "@capacitor/ios": "^7.6.10",
+    "@capacitor/share": "^7.0.2",
+    "vue": "^3.5.13"
+  },
+  "description": "现场水印by ccj — 独立跨平台现场拍照 App（iOS + Android），GSZD 斜水印 + 时间/经纬度/地址，照片与视频均真烧录水印",
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "canvas": "^3.2.3",
+    "vite": "^6.0.3"
+  },
+  "name": "field-watermark-app",
+  "private": true,
+  "scripts": {
+    "apk": "bash scripts/build-apk.sh",
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "sync": "npx cap sync",
+    "sync:android": "npx cap sync android",
+    "sync:ios": "npx cap sync ios",
+    "verify": "node scripts/verify-watermark.mjs"
+  },
+  "type": "module",
+  "version": "1.0.0"
+}
