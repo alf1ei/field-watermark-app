@@ -62,7 +62,10 @@ jobs:
           gradle-version: 8.11.1
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --console=plain
+        run: |
+          cd android
+          gradle assembleDebug --no-daemon --console=plain
+
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
