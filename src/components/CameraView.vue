@@ -22,6 +22,7 @@
       </div>
     </div>
     <button v-if="camOk" class="flash-btn" @click="cycleFlashMode" title="闪光灯：点一下切换 自动/常开/关闭">闪光灯·{{ flashLabel }}</button>
+    <div v-if="recording" class="rec-chip">● {{ recTimeText }}</div>
     <div v-if="!camOk" class="cam-off">
       <div v-if="camStarting" class="cam-starting"><span class="cam-spinner"></span>正在启动相机…</div>
       <div v-else>{{ camError || '相机未启动' }}</div>
@@ -48,24 +49,25 @@
         <button :class="{ active: mode === 'photo' }" :disabled="recording" @click="switchMode('photo')">📷 拍照</button>
         <button :class="{ active: mode === 'video' }" :disabled="recording" @click="switchMode('video')">🎥 录像</button>
       </div>
-      <button class="circle-btn" @click="showLensPanel = true" title="镜头 / 变焦">{{ zoomLabel }}</button>
+      <button class="circle-btn zoom-btn" @click="onZoomBtnClick"
+        @pointerdown="onZoomDragStart" @pointermove="onZoomDragMove" @pointerup="onZoomDragEnd" @pointercancel="onZoomDragEnd"
+        title="镜头 / 变焦：点一下打开面板，按住往上滑拉进、往下滑缩小">{{ zoomLabel }}</button>
     </div>
+    <div v-if="zoomDragging" class="zoom-bubble">{{ zoomLabel }}</div>
     <div class="shutter-row">
-      <button @click="toggleFacing" :disabled="recording || !camOk">🔄 前后切换</button>
+      <div class="side-group left">
+        <button class="side-btn" @click="toggleFacing" :disabled="recording || !camOk">🔄 前后切换</button>
+        <button class="side-btn" @click="systemCamera('album')" :disabled="!camOk">相册选图</button>
+      </div>
       <button v-if="mode === 'photo'" class="shutter photo" :disabled="!camOk" @click="takePhoto">拍照</button>
       <button v-else class="shutter" :class="{ rec: recording }" :disabled="!camOk" @click="recording ? stopRecording() : startRecording()">
         {{ recording ? '停止' : '录像' }}
       </button>
-      <button @click="systemCamera('album')" :disabled="!camOk">相册选图</button>
-    </div>
-    <div class="loc-line" @click="openProjectEdit" title="点一下改项目名称">
-      <span v-if="recording" class="rec-time">● {{ recTimeText }}</span>
-      <span v-else>{{ locLineText }}</span>
-    </div>
-    <div class="tool-row">
-      <button @click="refreshLocation" :disabled="locBusy">📍 重新定位</button>
-      <button v-if="camOk" @click="systemCamera('camera')">系统相机拍照</button>
-      <button v-if="!camOk" @click="systemVideo">系统相机录像</button>
+      <div class="side-group right">
+        <button class="side-btn" @click="refreshLocation" :disabled="locBusy">📍 重新定位</button>
+        <button v-if="camOk" class="side-btn" @click="systemCamera('camera')">系统相机拍照</button>
+        <button v-if="!camOk" class="side-btn" @click="systemVideo">系统相机录像</button>
+      </div>
     </div>
   </div>
 
@@ -261,18 +263,8 @@ const recTimeText = computed(() => {
   const s = String(recSeconds.value % 60).padStart(2, '0')
   return `${m}:${s}`
 })
-// 定位行：有地址显示地址；没地址但有经纬度时，获取中显示“获取中”，
-// 失败后直接显示经纬度、地址留空，不一直卡在“获取中/未获取到”。
-const locLineText = computed(() => {
-  if (loc.value.address) return '地址：' + loc.value.address
-  if (loc.value.lon != null) {
-    if (addrState.value === 'fetching') return '已定位，地址获取中…'
-    const lon = (loc.value.gcjLon != null ? loc.value.gcjLon : loc.value.lon).toFixed(4)
-    const lat = (loc.value.gcjLat != null ? loc.value.gcjLat : loc.value.lat).toFixed(4)
-    return `已定位 ${lon}, ${lat}（地址未获取到）`
-  }
-  return '正在定位…'
-})
+// 注意：快门下面的地址行在 v2.1.5 取消了——地址已在取景器信息条里显示，
+// 这里是重复的；录像计时改到取景左上角的 rec-chip。定位状态仍由顶部的 hint 行显示。
 
 function showToast(msg, ms = 3500) {
   toast.value = msg
@@ -435,6 +427,57 @@ async function applyZoom(z) {
     showToast('变焦失败：' + (e && e.message ? e.message : e))
     readTrackCaps()
   }
+}
+
+// ---- 变焦按钮按住上下滑：按住 1× 圆钮往上滑拉进（放大）、往下滑缩小；
+// 位移很小（< 8px）当点按，打开镜头/变焦面板。pointer capture 让手指滑出按钮外也能继续；
+// 和双指捏合缩放不冲突（捏合在取景器 stage 上，这个按钮在控制区）。
+const zoomDragging = ref(false)
+let zoomDragState = null // { startY, startZoom, moved }
+let zoomDragApplied = 1
+let zoomSuppressClick = false
+function onZoomDragStart(e) {
+  const caps = zoomCaps.value
+  if (!caps) { zoomDragState = null; return } // 当前镜头不支持变焦：纯点按
+  zoomDragState = { startY: e.clientY, startZoom: zoom.value, moved: false }
+  zoomDragApplied = zoom.value
+}
+function onZoomDragMove(e) {
+  if (!zoomDragState) return
+  const dy = zoomDragState.startY - e.clientY // 上滑为正（放大）
+  if (!zoomDragState.moved && Math.abs(dy) < 8) return
+  if (!zoomDragState.moved) {
+    zoomDragState.moved = true
+    zoomDragging.value = true
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+  }
+  const caps = zoomCaps.value
+  if (!caps) return
+  // 上滑 120px 变焦翻一倍（指数映射：低倍微调、高倍大步），夹到设备变焦范围
+  let z = zoomDragState.startZoom * Math.pow(2, dy / 120)
+  z = Math.min(caps.max, Math.max(caps.min, z))
+  z = Math.round(z * 10) / 10
+  if (Math.abs(z - zoomDragApplied) < 0.05 && z !== caps.min && z !== caps.max) return
+  zoomDragApplied = z
+  zoom.value = z // 右上角 1× 标签同步更新（zoomLabel 是 zoom 的 computed），拖动气泡也同步
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (track) track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {})
+}
+function onZoomDragEnd() {
+  if (!zoomDragState) return
+  const wasDrag = zoomDragState.moved
+  zoomDragState = null
+  zoomDragging.value = false
+  if (wasDrag) {
+    // 拖过：接下来的 click 是拖动的收尾，不打开面板；click 晚于 pointerup 触发，
+    // 所以先立 flag、由 click 处理里消费，1 秒后兜底清掉（防止 click 没触发时 flag 残留）
+    zoomSuppressClick = true
+    setTimeout(() => { zoomSuppressClick = false }, 1000)
+  }
+}
+function onZoomBtnClick() {
+  if (zoomSuppressClick) { zoomSuppressClick = false; return }
+  showLensPanel.value = true
 }
 
 // ---- 双指捏合变焦：在取景器上两指张开/合拢，距离变化映射到变焦倍数 ----
@@ -605,12 +648,36 @@ async function toggleFacing() {
   await startCamera()
 }
 
+// ---- 相机常驻后台（v2.1.5，用户要求）：从进入 App 就启动，切到相册页也不停，
+// 直到退出 App 才关；切回拍摄不卡（不用重新 getUserMedia）。App.vue 的 tab 切换时调用。
+// 切到相册：只收起拍摄页的弹层、关掉预览补光灯（别在相册页一直亮着），定位/地址重试继续跑；
+// 切回来：流还活着就不重开（只把取景播起来），死了才重开（走“正在启动相机…”状态）。
+function suspendCameraView() {
+  showRatioPanel.value = false
+  showLensPanel.value = false
+  editSheet.value = false
+  preview.value = null
+  if (flashOn.value) setTorch(false).catch(() => {})
+}
+async function resumeCameraView() {
+  await resumeCameraIfNeeded()
+  applyFlashPreviewState()
+}
+defineExpose({ suspendCameraView, resumeCameraView })
+
 // 系统相机/相册选图回来后（App 曾切到后台），直播流可能已被系统断掉；
 // 回到前台时检查一次，流断了就重开，避免取景画面冻住。
+// 常驻模式下切 tab 不会停流：这里先判视频轨还活不活（readyState === 'live'），
+// 活着就只把取景播起来（藏起 video 时可能停了），不重新 getUserMedia。
 async function resumeCameraIfNeeded() {
   if (recording.value || !camOk.value) return
   const track = stream.value && stream.value.getVideoTracks()[0]
-  if (track && track.readyState === 'live' && videoEl.value && !videoEl.value.paused) return
+  if (track && track.readyState === 'live') {
+    if (videoEl.value && videoEl.value.paused) {
+      try { await videoEl.value.play() } catch { /* 播不起来就等下一次 */ }
+    }
+    return
+  }
   await startCamera()
 }
 function onVisibilityChange() {
@@ -887,11 +954,11 @@ async function takePhoto() {
 }
 
 // 拍照后存相册：原生直接写相册；网页版浏览器没有直接写相册的权限，
-// 照片先存在 App 的作品里，需要进相册时去作品点分享、选“存储到照片”。
+// 照片先存在 App 的相册里，需要进相册时去相册点分享、选“存储到照片”。
 async function afterPhotoSaved({ rec }) {
   if (Capacitor.isNativePlatform()) {
     if (rec.gallery === 'gallery') showToast('已保存到相册 ✓，继续拍吧')
-    else showToast('已存 App 内，相册保存失败（可在作品里分享导出）')
+    else showToast('已存 App 内，相册保存失败（可在相册里分享导出）')
     return
   }
   showToast('已保存 ✓，继续拍吧')
@@ -1112,14 +1179,14 @@ onMounted(() => {
   }
   fitStage()
   attachPinch()
-  startCamera()
+  startCamera() // 常驻模式：App 一打开就启动相机，切 tab 不停，只在退出 App 时停
   showCachedFixImmediately() // 打开先显示上次缓存的坐标，再取新的
   refreshLocation()
   startLocationWatch()
   startAddrRetryLoop()
 })
 onBeforeUnmount(() => {
-  clearBackOverlays() // 兜底：切 tab 卸载时清掉本页残留的弹层注册
+  clearBackOverlays() // 兜底：App 退出卸载时清掉本页残留的弹层注册（切 tab 不再卸载，常驻不走这里）
   clearInterval(clockTimer)
   clearInterval(recTimer)
   cancelAnimationFrame(recRaf)
@@ -1130,6 +1197,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('online', onOnline)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (stopWatch) { stopWatch(); stopWatch = null }
-  stopStream()
+  stopStream() // 只在退出 App 时停流（常驻模式下切 tab 不停）
 })
 </script>

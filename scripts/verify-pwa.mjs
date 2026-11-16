@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v9 + skipWaiting', sw.includes('fw-pwa-v9') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v10 + skipWaiting', sw.includes('fw-pwa-v10') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,20 +67,23 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.4', pkg && pkg.version === '2.1.4')
+check('package.json 版本是 2.1.5', pkg && pkg.version === '2.1.5')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.4（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.4') && workflow.includes('长江现场水印相机 v2.1.4') && workflow.includes('长江现场水印相机-2.1.4-apk') && workflow.includes('长江现场水印相机v2.1.4.apk'))
+check('工作流已同步到 v2.1.5（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.5') && workflow.includes('长江现场水印相机 v2.1.5') && workflow.includes('长江现场水印相机-2.1.5-apk') && workflow.includes('长江现场水印相机v2.1.5.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
 check('App.vue 有 iOS 添加到主屏幕提示', appVue.includes('添加到主屏幕') && appVue.includes('beforeinstallprompt'))
 check('App.vue 已去掉顶部标题栏（无 topbar、无版本号、无齿轮）', !appVue.includes('topbar') && !appVue.includes('SettingsModal') && !appVue.includes('⚙'))
-// Bug 1（真机 2.1.0）：CameraView 是多根节点组件，v-show 藏不住，必须用 v-if 整体挂载/卸载
-check('切 tab 用 v-if 挂载/卸载 CameraView（不用 v-show，多根节点藏不住）', appVue.includes("v-if=\"tab === 'shoot'\"") && !appVue.includes("v-show=\"tab === 'shoot'\""))
+// 2.1.5：相机常驻后台（用户要求）：CameraView 包一层单根 div 再 v-show 切换，
+// 切到相册也不卸载、不停流；直接对多根节点的 CameraView 用 v-show 会只藏第一个根节点
+// （真机 2.1.0 的 bug）。切 tab 时 suspend/resume，只在流死了才重开。
+check('相机常驻：CameraView 包在单根 cam-page 里 v-show 切换（不是 v-if 卸载）', appVue.includes('class="cam-page"') && appVue.includes("v-show=\"tab === 'shoot'\"") && !appVue.includes("v-if=\"tab === 'shoot'\""))
+check('切 tab 时调用挂起/恢复（suspendCameraView / resumeCameraView）', appVue.includes('suspendCameraView') && appVue.includes('resumeCameraView') && appVue.includes("watch(tab, (t) => {"))
 check('SettingsModal.vue 文件已删除', !existsSync(join(root, 'src/components/SettingsModal.vue')))
 check('A2HS 文案用新名', appVue.includes('长江现场水印相机'))
 const cam = readFileSync(join(root, 'src/components/CameraView.vue'), 'utf8')
@@ -114,7 +117,7 @@ check('红色快门（#ff3b30）', readFileSync(join(root, 'src/style.css'), 'ut
 const css = readFileSync(join(root, 'src/style.css'), 'utf8')
 check('顶部安全区：.app 顶部留 max(env(safe-area-inset-top), 32px)，不撞状态栏/挖孔', css.includes('padding-top: max(env(safe-area-inset-top, 0px), 32px)'))
 check('底部导航有底部安全区 inset', css.includes('env(safe-area-inset-bottom)'))
-check('点水印信息条/定位提示/地址行弹出改项目名称（同步聚焦）', cam.includes('openProjectEdit') && cam.includes('editSheet') && cam.includes('input.focus') && cam.includes('@click="openProjectEdit"'))
+check('点水印信息条/定位提示弹出改项目名称（同步聚焦）', cam.includes('openProjectEdit') && cam.includes('editSheet') && cam.includes('input.focus') && cam.includes('@click="openProjectEdit"'))
 check('waitForLocation 有坐标直接拍、无坐标最多等 5 秒（不递归、不久等）', cam.includes('if (loc.value.lon != null) return') && cam.includes('setTimeout(r, 5000)') && cam.includes('await refreshLocation()'))
 check('拍摄页无补地址文案、拍照等定位完成', !cam.includes('补地址') && cam.includes('waitForLocation'))
 check('拍照不再另存原图（无 origPath 保存）', !cam.includes('origPath ='))
@@ -139,7 +142,7 @@ check('地址缓存 500 米内先显示（fw_last_addr）', geoJs.includes('getC
 // 旧版总预算只有 12 秒、每路只试一次、无重试、后台重试只靠监听位置更新（室内静止不动不触发）。
 // 修法：总预算 45 秒，每路多试几次带退避；App 打开期间后台循环重试（30 秒→5 分钟退避），网络恢复立刻重查；
 // 重新定位清掉退避重查地址；成功后回填已保存照片的地址。
-check('取地址总预算 45 秒 + 多次重试带退避（非 12 秒单次）', cam.includes('resolveAddress') && geoJs.includes('opts.budgetMs || 45000') && geoJs.includes('fetchJsonWithRetry') && !cam.includes("withTimeout(reverseGeocode(gcjLon, gcjLat), 12000") && cam.includes('locLineText') && cam.includes('addrState'))
+check('取地址总预算 45 秒 + 多次重试带退避（非 12 秒单次）', cam.includes('resolveAddress') && geoJs.includes('opts.budgetMs || 45000') && geoJs.includes('fetchJsonWithRetry') && !cam.includes("withTimeout(reverseGeocode(gcjLon, gcjLat), 12000") && cam.includes('addrState'))
 check('高德 Key 优先 + Nominatim 兜底（reverseGeocode）', geoJs.includes('getAmapKey') && geoJs.includes('restapi.amap.com') && geoJs.includes('nominatim.openstreetmap.org'))
 check('地址后台循环重试（退避 30 秒→5 分钟）+ 网络恢复重查', cam.includes('addrRetryTick') && cam.includes('addrRetryDelay') && cam.includes('Math.min(addrRetryDelay * 2, 300000)') && cam.includes("window.addEventListener('online'"))
 check('重新定位同时重查地址（清退避）', cam.includes('resetAddrRetryNow') && cam.includes('resetAddrRetryNow()'))
@@ -161,6 +164,30 @@ check('startCamera 入口置 camStarting=true，成功/失败都清掉', cam.inc
 check('流一拿到就亮取景（camOk 在 play() 之前翻 true，不等 5 秒）', cam.indexOf('camOk.value = true') < cam.indexOf("withTimeout(videoEl.value.play()"))
 check('启动转圈样式在 style.css（.cam-spinner + @keyframes spin）', css.includes('.cam-spinner') && css.includes('@keyframes spin'))
 check('真失败才写报错（失败分支先清 camStarting 再写 camError）', cam.includes("camOk.value = false\n  camStarting.value = false\n  camError.value = '无法打开相机：'"))
+// 2.1.5 新增：相机常驻后台（切 tab 不停流）+ 变焦按钮按住上下滑 + 底部布局（快门居中、地址行取消、控制区下移取景更大）
+// + 相册长按多选拖进文件夹 + 导航“作品”改“相册”。
+check('挂起/恢复方法对 App.vue 暴露（defineExpose）', cam.includes('defineExpose({ suspendCameraView, resumeCameraView })'))
+check('切到相册收起弹层、关预览补光灯（suspend 时四个弹层都关、灯灭）', cam.includes('showRatioPanel.value = false') && cam.includes('showLensPanel.value = false') && cam.includes('editSheet.value = false') && cam.includes('preview.value = null') && cam.includes('if (flashOn.value) setTorch(false)'))
+check('切回拍摄只在流死了才重开（先判视频轨 live，活着只播起来）', cam.includes("track.readyState === 'live'") && cam.includes("await videoEl.value.play()") && cam.includes('resumeCameraIfNeeded'))
+check('相机只在退出 App 时停流（onBeforeUnmount 里 stopStream，tab 切换不走）', cam.includes('stopStream() // 只在退出 App 时停流'))
+check('变焦按钮按住上下滑（pointerdown/move/up + setPointerCapture，滑出按钮外继续）', cam.includes('onZoomDragStart') && cam.includes('onZoomDragMove') && cam.includes('onZoomDragEnd') && cam.includes('setPointerCapture'))
+check('变焦滑动上滑放大、下滑缩小（指数映射 120px 翻一倍，夹到设备范围）', cam.includes('Math.pow(2, dy / 120)') && cam.includes('Math.min(caps.max, Math.max(caps.min, z))') && cam.includes('zoom.value = z'))
+check('变焦滑动小位移当点按（8px 阈值，打开镜头/变焦面板；拖动后 click 抑制）', cam.includes('Math.abs(dy) < 8') && cam.includes('onZoomBtnClick') && cam.includes('zoomSuppressClick'))
+check('变焦滑动时标签实时更新、有拖动气泡指示（zoomDragging + zoom-bubble）', cam.includes('zoomDragging') && cam.includes('zoom-bubble') && cam.includes('zoomLabel'))
+check('变焦按钮 touch-action: none（滑动不被浏览器抢去滚动页面）', css.includes('.zoom-btn') && css.includes('touch-action: none'))
+check('变焦滑动和双指捏合不冲突（捏合在 stage 上，按钮在控制区）', cam.includes('onPinchMove') && cam.includes('onZoomDragMove') && cam.includes("class=\"circle-btn zoom-btn\""))
+check('底部快门居中：左列前后切换/相册选图、右列重新定位/系统拍照、快门跨两行正中间', cam.includes('side-group left') && cam.includes('side-group right') && cam.includes('class="shutter-row"') && css.includes('.shutter-row .shutter { grid-row: 1 / 3; grid-column: 2; }'))
+check('重新定位和系统拍照上下分开、距离拉开（右列纵向两格，gap 10px）', css.includes('.side-group { display: flex; flex-direction: column; gap: 10px;'))
+check('快门下地址行已取消（无 loc-line/tool-row），录像计时移到取景左上角 rec-chip', !cam.includes('loc-line') && !cam.includes('tool-row') && cam.includes('rec-chip') && cam.includes('recTimeText'))
+check('底部控制区下移、取景更大（controls 不再上叠 14px，padding 收紧）', css.includes('margin-top: 0') && !css.includes('margin-top: -14px') && !css.includes('.tool-row'))
+check('导航“作品”改“相册”（拍摄/相册），空状态与提示文案同步改', appVue.includes('</span>相册') && !appVue.includes('</span>作品') && works.includes('还没有相册') && !works.includes('还没有作品') && cam.includes('可在相册里分享导出'))
+check('长按进多选（500ms 长按、选中、震动、抑制随后 click）', works.includes('lpTimer') && works.includes('500') && works.includes('toggleSelect(it.id)') && works.includes('suppressCellClick') && works.includes('navigator.vibrate'))
+check('多选模式点按切换选择（selected 集合 + 选中高亮 + 打勾）', works.includes('selected.value') && works.includes('isSelected(it.id)') && works.includes('sel-check') && css.includes('.cell.selected'))
+check('多选顶栏（已选数量 + 取消/完成入口）', works.includes('sel-bar') && works.includes('已选') && works.includes('exitSelectMode'))
+check('多选拖进文件夹（拖动数量角标 + elementFromPoint 找文件夹 + 高亮）', works.includes('cellDragState') && works.includes('elementFromPoint') && works.includes("closest('.folder-card')") && works.includes('dropTarget') && css.includes('.folder-card.drop-hot') && css.includes('.drag-badge'))
+check('拖进文件夹批量移动（setPhotoFolder 逐个移、打开目标文件夹、提示张数）', works.includes('moveSelectedToFolder') && works.includes('setPhotoFolder(id, folderId)') && works.includes('expandedFolders.value.add(folderId)'))
+check('返回键先退出多选（works-multiselect 注册进返回栈）', works.includes("pushBackOverlay('works-multiselect'") && works.includes('exitSelectMode'))
+check('长按滚动取消（移动 > 10px 取消长按计时）', works.includes('Math.hypot(e.clientX - lpState.startX, e.clientY - lpState.startY) > 10'))
 check('后台持续监听定位', geoJs.includes('watchPosition') && geoJs.includes('clearWatch'))
 check('refreshLocation 返回进行中的 promise（CameraView 里 locPending）', cam.includes('if (locPending) return locPending') && cam.includes('return locPending'))
 check('地址短格式 5 级（省+市+区县+街道/镇+道路/小区/派出所/社区）', geoJs.includes('formatAmapAddress') && geoJs.includes('formatNominatimAddress') && geoJs.includes('shortenAddressFromParts'))
@@ -177,7 +204,7 @@ check('返回键监听在卸载时移除（backHandle.remove）', appVue.include
 check('退出提示复用已有 toast 样式（不另起一套）', appVue.includes('class="toast"') && appVue.includes('showAppToast'))
 check('拍摄页四个弹层都注册进返回栈（比例/镜头/改名/预览）', cam.includes("trackOverlay('cam-ratio'") && cam.includes("trackOverlay('cam-lens'") && cam.includes("trackOverlay('cam-edit'") && cam.includes("trackOverlay('cam-preview'") && cam.includes('pushBackOverlay(id, close)'))
 check('作品页详情和新建文件夹注册进返回栈', works.includes("pushBackOverlay('works-detail'") && works.includes("pushBackOverlay('works-newfolder'"))
-check('切 tab 卸载时清掉残留弹层注册', cam.includes('clearBackOverlays()') && works.includes('clearBackOverlays()'))
+check('卸载时清掉残留弹层注册（App 退出；切 tab 不再卸载）', cam.includes('clearBackOverlays()') && works.includes('clearBackOverlays()'))
 
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))

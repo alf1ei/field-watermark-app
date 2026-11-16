@@ -1,5 +1,11 @@
 <template>
-  <div class="works">
+  <div class="works" ref="worksEl" :class="{ selecting: selectMode }">
+    <div v-if="selectMode" class="sel-bar">
+      <span>已选 {{ selected.size }} 张</span>
+      <span class="sel-hint">按住拖到文件夹上松手</span>
+      <button class="ghost" @click="exitSelectMode">取消</button>
+      <button class="primary" @click="exitSelectMode">完成</button>
+    </div>
     <div class="folder-bar">
       <button class="ghost" @click="showNewFolder = !showNewFolder">＋新建文件夹</button>
     </div>
@@ -9,7 +15,7 @@
     </div>
 
     <template v-for="f in foldersWithItems" :key="f.id">
-      <div class="folder-card">
+      <div class="folder-card" :data-folder-id="f.id" :class="{ 'drop-hot': dropTarget === f.id }">
         <button class="folder-head" @click="toggleFolder(f.id)">
           <span class="folder-ic">📁</span>
           <span class="folder-name">{{ f.name }}</span>
@@ -18,12 +24,15 @@
         </button>
         <template v-if="expandedFolders.has(f.id)">
           <div class="grid">
-            <button v-for="it in f.items" :key="it.id" class="cell" @click="openDetail(it)">
+            <button v-for="it in f.items" :key="it.id" class="cell" :class="{ selected: isSelected(it.id) }"
+              @click="onCellClick(it)" @pointerdown="onCellPointerDown(it, $event)" @pointermove="onCellPointerMove"
+              @pointerup="onCellPointerUp" @pointercancel="onCellPointerCancel" @contextmenu.prevent>
               <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
               <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
               <span v-else class="tag">照片</span>
               <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
               <span class="tag">{{ it.time.slice(5, 16) }}</span>
+              <span v-if="isSelected(it.id)" class="sel-check">✓</span>
             </button>
           </div>
           <button class="ghost folder-del" @click="doDeleteFolder(f)">删除文件夹（照片回到日期列表）</button>
@@ -35,12 +44,15 @@
       <template v-if="g.date === today">
         <h2>{{ g.date }}（今天，{{ g.items.length }}）</h2>
         <div class="grid">
-          <button v-for="it in g.items" :key="it.id" class="cell" @click="openDetail(it)">
+          <button v-for="it in g.items" :key="it.id" class="cell" :class="{ selected: isSelected(it.id) }"
+            @click="onCellClick(it)" @pointerdown="onCellPointerDown(it, $event)" @pointermove="onCellPointerMove"
+            @pointerup="onCellPointerUp" @pointercancel="onCellPointerCancel" @contextmenu.prevent>
             <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
             <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
             <span v-else class="tag">照片</span>
             <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
             <span class="tag">{{ it.time.slice(5, 16) }}</span>
+            <span v-if="isSelected(it.id)" class="sel-check">✓</span>
           </button>
         </div>
       </template>
@@ -55,12 +67,15 @@
       <template v-else>
         <h2>{{ g.date }}（{{ g.items.length }}）</h2>
         <div class="grid">
-          <button v-for="it in g.items" :key="it.id" class="cell" @click="openDetail(it)">
+          <button v-for="it in g.items" :key="it.id" class="cell" :class="{ selected: isSelected(it.id) }"
+            @click="onCellClick(it)" @pointerdown="onCellPointerDown(it, $event)" @pointermove="onCellPointerMove"
+            @pointerup="onCellPointerUp" @pointercancel="onCellPointerCancel" @contextmenu.prevent>
             <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
             <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
             <span v-else class="tag">照片</span>
             <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
             <span class="tag">{{ it.time.slice(5, 16) }}</span>
+            <span v-if="isSelected(it.id)" class="sel-check">✓</span>
           </button>
         </div>
         <button class="ghost stack-collapse" @click="expandedStacks.delete(g.date)">收起堆叠</button>
@@ -68,7 +83,7 @@
     </template>
 
     <div v-if="records.length === 0" class="empty">
-      还没有作品<br />去“拍摄”拍第一张带 GSZD 水印的照片或视频吧
+      还没有相册<br />去“拍摄”拍第一张带 GSZD 水印的照片或视频吧
     </div>
 
     <div class="settings-card">
@@ -111,6 +126,8 @@
   </div>
 
   <div v-if="toast" class="toast">{{ toast }}</div>
+
+  <div v-if="dragging" class="drag-badge" :style="{ left: dragging.x + 'px', top: dragging.y + 'px' }">📁 {{ dragging.n }} 张</div>
 </template>
 
 <script setup>
@@ -139,6 +156,134 @@ const newFolderName = ref('')
 const wmText = ref(getWatermarkText())
 const amapKey = ref(getAmapKey())
 const today = formatTime().slice(0, 10)
+const worksEl = ref(null)
+
+// ---- 长按多选 + 拖进文件夹 ----
+// 长按一张照片（500ms 不动）进入多选模式并选中它；多选模式下点按切换选择；
+// 在已选中的照片上按住拖动，拖到某个文件夹上松手，所有选中的一起移进去。
+// 返回键先退出多选（走现有的返回栈）；顶部栏有取消/完成入口。
+const selected = ref(new Set())
+const selectMode = computed(() => selected.value.size > 0)
+const dropTarget = ref(null) // 手指正经过的文件夹 id（高亮用）
+const dragging = ref(null) // { n, x, y }：拖动中的数量角标位置
+let lpTimer = null
+let lpState = null // { id, startX, startY }：长按计时中的手指
+let cellDragState = null // { id, startX, startY, active }：多选模式下拖动中的手指
+let suppressCellClick = false // 长按/拖动结束后的那次 click 要吞掉，否则会打开详情或误切换选择
+
+watch(selectMode, (open) => {
+  if (open) pushBackOverlay('works-multiselect', exitSelectMode)
+  else removeBackOverlay('works-multiselect')
+})
+function exitSelectMode() {
+  selected.value = new Set()
+  dropTarget.value = null
+  dragging.value = null
+}
+function isSelected(id) {
+  return selected.value.has(id)
+}
+function toggleSelect(id) {
+  const s = new Set(selected.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  selected.value = s
+}
+function onCellPointerDown(it, e) {
+  if (e.button != null && e.button !== 0) return
+  if (selectMode.value) {
+    // 多选模式下：只在已选中的照片上准备拖动；未选中的交给点按切换
+    if (isSelected(it.id)) {
+      cellDragState = { id: it.id, startX: e.clientX, startY: e.clientY, active: false }
+    }
+    return
+  }
+  lpState = { id: it.id, startX: e.clientX, startY: e.clientY }
+  clearTimeout(lpTimer)
+  lpTimer = setTimeout(() => {
+    lpTimer = null
+    lpState = null
+    // 长按进入多选：选中这一张；抑制随后的 click（否则会打开详情）
+    suppressCellClick = true
+    toggleSelect(it.id)
+    try { if (navigator.vibrate) navigator.vibrate(20) } catch { /* ignore */ }
+  }, 500)
+}
+function onCellPointerMove(e) {
+  if (lpState) {
+    // 长按计时中手指动了 > 10px：当成滚动，取消长按
+    if (Math.hypot(e.clientX - lpState.startX, e.clientY - lpState.startY) > 10) {
+      clearTimeout(lpTimer)
+      lpTimer = null
+      lpState = null
+    }
+    return
+  }
+  if (!cellDragState) return
+  const dx = e.clientX - cellDragState.startX
+  const dy = e.clientY - cellDragState.startY
+  if (!cellDragState.active) {
+    if (Math.hypot(dx, dy) < 12) return
+    cellDragState.active = true
+    dragging.value = { n: selected.value.size, x: e.clientX, y: e.clientY }
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+  }
+  dragging.value = { n: selected.value.size, x: e.clientX, y: e.clientY }
+  updateDropTarget(e.clientX, e.clientY)
+  autoScrollWorks(e.clientY)
+}
+function onCellPointerUp() {
+  clearTimeout(lpTimer)
+  lpTimer = null
+  lpState = null
+  if (cellDragState && cellDragState.active) {
+    const target = dropTarget.value
+    cellDragState = null
+    dragging.value = null
+    dropTarget.value = null
+    suppressCellClick = true
+    setTimeout(() => { suppressCellClick = false }, 1000) // 兜底：click 没触发时 1 秒后清掉
+    if (target) moveSelectedToFolder(target)
+    return
+  }
+  cellDragState = null
+}
+function onCellPointerCancel() {
+  clearTimeout(lpTimer)
+  lpTimer = null
+  lpState = null
+  cellDragState = null
+  dragging.value = null
+  dropTarget.value = null
+}
+function updateDropTarget(x, y) {
+  const el = document.elementFromPoint(x, y)
+  const card = el && el.closest ? el.closest('.folder-card') : null
+  dropTarget.value = card ? card.getAttribute('data-folder-id') : null
+}
+function autoScrollWorks(clientY) {
+  const el = worksEl.value
+  if (!el) return
+  // 拖到上下边缘时慢慢滚动列表，让屏幕外的文件夹也能拖到
+  if (clientY < 110) el.scrollBy(0, -16)
+  else if (clientY > window.innerHeight - 130) el.scrollBy(0, 16)
+}
+function moveSelectedToFolder(folderId) {
+  const folder = folders.value.find((f) => f.id === folderId)
+  if (!folder || selected.value.size === 0) return
+  const ids = [...selected.value]
+  ids.forEach((id) => setPhotoFolder(id, folderId))
+  const n = ids.length
+  exitSelectMode()
+  expandedFolders.value.add(folderId) // 打开目标文件夹，让用户直接看到移进去的照片
+  refresh()
+  showToast(`已将 ${n} 张移入「${folder.name}」`)
+}
+function onCellClick(it) {
+  if (suppressCellClick) { suppressCellClick = false; return }
+  if (selectMode.value) { toggleSelect(it.id); return }
+  openDetail(it)
+}
 
 // 返回键弹层栈：详情弹层和新建文件夹输入区开/关时注册/注销，App.vue 的 backButton 按打开顺序倒着关。
 watch(detail, (open) => {

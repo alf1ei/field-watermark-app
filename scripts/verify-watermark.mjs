@@ -11,7 +11,7 @@
 import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition, reverseGeocode } from '../src/utils/geo.js'
 import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
 import { pushBackOverlay, removeBackOverlay, popBackOverlay, backOverlayCount, clearBackOverlays } from '../src/utils/backstack.js'
-import { backfillRecordsAddress } from '../src/utils/store.js'
+import { backfillRecordsAddress, setPhotoFolder, getPhotoFolderMap, getPhotoFolder } from '../src/utils/store.js'
 
 let pass = 0, fail = 0
 function check(name, ok, extra = '') {
@@ -227,6 +227,32 @@ console.log('9) 地址重试 / 高德优先 / 地址回填')
     check('地址回填无地址时返回 0 不改记录', backfillRecordsAddress(106.94, 36.05, '') === 0)
   } finally {
     globalThis.fetch = origFetch
+    if (origLocalStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = origLocalStorage
+  }
+}
+
+// ---------- 10. 多选拖进文件夹：批量归档（v2.1.5） ----------
+// 拖动用的是 store 的 setPhotoFolder 逐个移：一次移多张、目标文件夹不变、移出（空串）回日期列表。
+console.log('10) 多选批量移进文件夹 setPhotoFolder')
+{
+  const origLocalStorage = globalThis.localStorage
+  const memStore = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => { memStore.set(k, String(v)) },
+    removeItem: (k) => { memStore.delete(k) }
+  }
+  try {
+    const ids = ['a1', 'a2', 'a3']
+    ids.forEach((id) => setPhotoFolder(id, 'f1'))
+    const map = getPhotoFolderMap()
+    check('一次移 3 张进同一文件夹', ids.every((id) => map[id] === 'f1'), JSON.stringify(map))
+    check('getPhotoFolder 读到归属', getPhotoFolder('a2') === 'f1')
+    setPhotoFolder('a2', '')
+    check('移出文件夹（空串）回到日期列表', getPhotoFolder('a2') === '' && getPhotoFolder('a1') === 'f1')
+    check('其他记录的归属不受影响', getPhotoFolder('a3') === 'f1')
+  } finally {
     if (origLocalStorage === undefined) delete globalThis.localStorage
     else globalThis.localStorage = origLocalStorage
   }

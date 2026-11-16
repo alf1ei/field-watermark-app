@@ -6,11 +6,14 @@
       <button class="a2hs-close" @click="dismissA2hs">✕</button>
     </div>
     <main>
-      <!-- 注意：CameraView 是多根节点组件（project-bar/stage/hint/controls/弹窗），
-           v-show 只会作用到第一个根节点、其余根节点藏不住（真机 2.1.0 的 bug：
-           切到“作品”后拍摄 UI 仍显示在作品列表上方），所以必须用 v-if 整体挂载/卸载；
-           卸载时 onBeforeUnmount 会停掉相机流、定位监听和定时器。 -->
-      <CameraView v-if="tab === 'shoot'" @saved="onSaved" />
+      <!-- CameraView 常驻后台（v2.1.5，用户要求）：包一层单根 div 再 v-show 切换，
+           切到“相册”也不卸载、不停流，切回来不卡；直接对多根节点的 CameraView 用
+           v-show 会只藏第一个根节点（真机 2.1.0 的 bug：切到“相册”后拍摄 UI 仍显示
+           在相册列表上方）。相机从 App 启动就开着，只在退出 App 时才停；
+           切 tab 时 CameraView.suspendCameraView() 收起弹层、关预览补光灯。 -->
+      <div class="cam-page" v-show="tab === 'shoot'">
+        <CameraView ref="camRef" @saved="onSaved" />
+      </div>
       <WorksList v-if="tab === 'works'" ref="worksRef" />
     </main>
     <nav class="tabs">
@@ -18,7 +21,7 @@
         <span class="tab-ic">◉</span>拍摄
       </button>
       <button :class="{ active: tab === 'works' }" @click="tab = 'works'; worksCount++">
-        <span class="tab-ic">▦</span>作品
+        <span class="tab-ic">▦</span>相册
         <span class="count-badge" v-if="count > 0">{{ count }}</span>
       </button>
     </nav>
@@ -27,7 +30,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { App } from '@capacitor/app'
 import { popBackOverlay } from './utils/backstack.js'
@@ -36,11 +39,20 @@ import WorksList from './components/WorksList.vue'
 import { loadRecords } from './utils/store.js'
 
 const tab = ref('shoot')
+const camRef = ref(null)
 const worksRef = ref(null)
 const worksCount = ref(0)
 const count = ref(loadRecords().length)
 
-// App 级轻提示：复用已有的 .toast 样式（和拍摄页/作品页的 toast 同一套），
+// 相机常驻后台（v2.1.5）：切 tab 不卸载 CameraView、不停流；
+// 切到相册时只收起拍摄页弹层、关预览补光灯，切回来只在流死了才重开（不卡）。
+watch(tab, (t) => {
+  if (!camRef.value) return
+  if (t === 'works') camRef.value.suspendCameraView()
+  else if (t === 'shoot') camRef.value.resumeCameraView()
+})
+
+// App 级轻提示：复用已有的 .toast 样式（和拍摄页/相册页的 toast 同一套），
 // 只用于“再按一次退出应用”这类全局提示。
 const appToast = ref('')
 let appToastTimer = null
@@ -52,7 +64,7 @@ function showAppToast(msg, ms = 2000) {
 
 // 安卓返回键：只在这里注册一次，按优先级处理——
 //  1. 有弹层开着：先关最上层（backstack 按打开顺序倒着关）；
-//  2. 在“作品”tab：先回“拍摄”tab（拍摄页 v-if 重新挂载，相机会重开）；
+//  2. 在“相册”tab：先回“拍摄”tab（拍摄页常驻不重开，相机会接着跑）；
 //  3. 在“拍摄”tab 且什么都没开：第一次按提示“再按一次退出应用”，2 秒内再按一次才退出。
 // 网页版/PWA 没有系统返回键，不注册，别干扰浏览器自己的返回。
 const lastBackAt = ref(0)
