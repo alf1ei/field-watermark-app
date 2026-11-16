@@ -11,6 +11,20 @@ import { Capacitor } from '@capacitor/core'
 const LS_KEY = 'fw_records_v1'
 const LAST_PROJECT_KEY = 'fw_last_project'
 const HISTORY_KEY = 'fw_project_history'
+const WM_TEXT_KEY = 'fw_watermark_text'
+const FOLDERS_KEY = 'fw_folders_v1'
+const PHOTO_FOLDER_KEY = 'fw_photo_folder_v1'
+
+/** 斜水印文字：默认 GSZD，用户可在设置里改；改后只影响新拍的照片/视频 */
+export function getWatermarkText() {
+  try { return (localStorage.getItem(WM_TEXT_KEY) || '').trim() || 'GSZD' } catch { return 'GSZD' }
+}
+export function setWatermarkText(text) {
+  try {
+    localStorage.setItem(WM_TEXT_KEY, (text || '').trim())
+    window.dispatchEvent(new Event('fw-settings-changed'))
+  } catch { /* ignore */ }
+}
 
 export function loadRecords() {
   try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]') } catch { return [] }
@@ -33,6 +47,54 @@ export function setLastProject(name) {
 }
 export function getProjectHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') } catch { return [] }
+}
+
+/** ---- 作品文件夹（存在 localStorage）---- */
+export function getFolders() {
+  try {
+    const list = JSON.parse(localStorage.getItem(FOLDERS_KEY) || '[]')
+    return Array.isArray(list) ? list.filter((f) => f && f.id && f.name) : []
+  } catch { return [] }
+}
+export function saveFolders(list) {
+  try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(list)) } catch { /* ignore */ }
+}
+export function createFolder(name) {
+  const clean = (name || '').trim()
+  if (!clean) return null
+  const list = getFolders()
+  const folder = { id: uid(), name: clean.slice(0, 20), createdAt: Date.now() }
+  list.push(folder)
+  saveFolders(list)
+  return folder
+}
+export function deleteFolder(id) {
+  saveFolders(getFolders().filter((f) => f.id !== id))
+  // 文件夹里的照片回到日期列表（只清归属，不删照片）
+  const map = getPhotoFolderMap()
+  let changed = false
+  for (const k of Object.keys(map)) {
+    if (map[k] === id) { delete map[k]; changed = true }
+  }
+  if (changed) savePhotoFolderMap(map)
+}
+export function getPhotoFolderMap() {
+  try {
+    const m = JSON.parse(localStorage.getItem(PHOTO_FOLDER_KEY) || '{}')
+    return m && typeof m === 'object' ? m : {}
+  } catch { return {} }
+}
+export function savePhotoFolderMap(map) {
+  try { localStorage.setItem(PHOTO_FOLDER_KEY, JSON.stringify(map || {})) } catch { /* ignore */ }
+}
+export function getPhotoFolder(recordId) {
+  return getPhotoFolderMap()[recordId] || ''
+}
+export function setPhotoFolder(recordId, folderId) {
+  const map = getPhotoFolderMap()
+  if (folderId) map[recordId] = folderId
+  else delete map[recordId]
+  savePhotoFolderMap(map)
 }
 
 export function uid() {
@@ -91,7 +153,7 @@ export async function saveToGallery({ fileUri, isVideo }) {
       const src = await Filesystem.readFile({ path: `works/${fileName}`, directory: Directory.Data })
       const sub = isVideo ? 'Movies' : 'Pictures'
       await Filesystem.writeFile({
-        path: `${sub}/现场水印by ccj/${fileName}`,
+        path: `${sub}/长江现场水印相机/${fileName}`,
         data: src.data, directory: Directory.ExternalStorage, recursive: true
       })
       return { ok: true, where: 'gallery', note: '已写入共享存储，请到相册查看' }

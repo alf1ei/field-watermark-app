@@ -1,65 +1,391 @@
+/* 长江现场水印相机 — 液态玻璃（Liquid Glass）风格
+ * 思路：控件是浮在实时画面上的半透明磨砂玻璃——
+ * 背景透出来 + 高斯模糊 + 边缘一圈淡淡的高光 + 大圆角 + 柔和投影。
+ * 注意：预览层底部那条黑条是水印本身（要和烧进照片里的一致），不做玻璃化。 */
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body, #app { height: 100%; margin: 0; }
-body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif; background: #101418; color: #fff; }
-button { font-family: inherit; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  background: radial-gradient(120% 90% at 50% 0%, #16233a 0%, #0a0e14 55%, #07090d 100%);
+  background-attachment: fixed;
+  color: #f5f8fc;
+}
+button { font-family: inherit; transition: transform .18s cubic-bezier(.32,.72,.35,1), background .18s, box-shadow .18s, border-color .18s; }
+button:active { transform: scale(.96); }
 input, select { font-family: inherit; }
 .app { display: flex; flex-direction: column; height: 100dvh; }
-header.topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; background: #0b3d91; }
-header.topbar h1 { font-size: 17px; margin: 0; }
-header.topbar .ver { font-size: 12px; opacity: .8; }
+
 main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-nav.tabs { display: flex; background: #1a212b; border-top: 1px solid #2b3644; }
-nav.tabs button { flex: 1; padding: 12px 0 14px; background: none; border: none; color: #9fb0c3; font-size: 15px; }
-nav.tabs button.active { color: #fff; font-weight: 700; background: #232e3c; }
-.project-bar { display: flex; gap: 8px; padding: 10px 12px; background: #1a212b; align-items: center; }
-.project-bar label { font-size: 14px; color: #c8d4e2; white-space: nowrap; }
-.project-bar input { flex: 1; min-width: 0; padding: 10px 12px; font-size: 16px; border-radius: 8px; border: 1px solid #3a4a5c; background: #0f141b; color: #fff; outline: none; }
-.project-bar input:focus { border-color: #2f7de1; }
-.project-bar select { max-width: 110px; padding: 9px 6px; font-size: 14px; border-radius: 8px; border: 1px solid #3a4a5c; background: #0f141b; color: #fff; }
-.hint { padding: 6px 12px; font-size: 12px; color: #8fa1b5; background: #141a21; }
+
+/* ---- 底部导航：磨砂玻璃条 ---- */
+nav.tabs {
+  display: flex; gap: 6px; padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(13,18,26,.6);
+  -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+  border-top: 1px solid rgba(255,255,255,.08);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+nav.tabs button {
+  flex: 1; padding: 10px 0; background: none; border: none; border-radius: 14px;
+  color: #9fb0c3; font-size: 15px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+nav.tabs button .tab-ic { font-size: 17px; }
+nav.tabs button.active {
+  color: #fff; background: rgba(47,140,255,.22);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+}
+.count-badge {
+  font-size: 11px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #2f8cff, #0a64d8);
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ---- 项目名输入：玻璃输入框 ---- */
+.project-bar { display: flex; gap: 8px; padding: 12px 14px; align-items: center; }
+.project-bar label { font-size: 14px; font-weight: 600; color: #c8d4e2; white-space: nowrap; }
+.project-bar input, .project-bar select {
+  padding: 11px 14px; font-size: 16px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.07); color: #fff; outline: none;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+.project-bar input { flex: 1; min-width: 0; }
+.project-bar input:focus {
+  border-color: rgba(47,140,255,.75);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 0 0 4px rgba(47,140,255,.18);
+}
+.project-bar input::placeholder { color: #7e90a5; }
+.project-bar select { max-width: 110px; padding: 10px 8px; font-size: 14px; }
+.hint { padding: 8px 16px; font-size: 12px; line-height: 1.6; color: #8fa1b5; cursor: pointer; }
 .hint.err { color: #ffb4b4; }
-.cam-wrap { position: relative; flex: 1; min-height: 0; background: #000; overflow: hidden; }
+
+/* ---- 取景舞台：按比例适配（苹果相机式），9:16 铺满上下，3:4 / 1:1 只占对应区域 ---- */
+.stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; }
+.cam-wrap { position: relative; flex: none; background: #000; overflow: hidden; }
 .cam-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
-/* 实时水印预览层：与烧录函数同一版式（GSZD -30° 居中 + 底部黑条），所见即所得 */
+/* 实时水印预览层：与烧录函数同一版式（斜水印 -30° 居中 + 底部黑条），所见即所得；点信息条改项目名称 */
 .wm-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.wm-overlay .gszd { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-30deg); font-weight: 900; font-size: 17vw; color: rgba(255,255,255,.55); letter-spacing: .02em; white-space: nowrap; }
-.wm-overlay .bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); padding: 8px 12px; font-size: 13px; line-height: 1.5; }
+.wm-overlay .gszd {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%) rotate(-30deg);
+  font-weight: 900; font-size: 22vw; color: rgba(255,255,255,.35);
+  letter-spacing: .02em; white-space: nowrap;
+}
+.wm-overlay .bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); padding: 8px 12px; font-size: 13px; line-height: 1.5; pointer-events: auto; cursor: pointer; }
 .wm-overlay .bar .p { font-weight: 700; }
 .wm-overlay .bar div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flash-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 5;
+  padding: 8px 14px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.2);
+  background: rgba(0,0,0,.45); color: #fff; font-size: 13px; font-weight: 600;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
+}
 .cam-off { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; color: #9fb0c3; padding: 20px; text-align: center; }
-.controls { padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); background: #1a212b; display: flex; flex-direction: column; gap: 10px; }
-.mode-row { display: flex; gap: 8px; justify-content: center; }
-.mode-row button, .tool-row button { padding: 8px 16px; border-radius: 999px; border: 1px solid #3a4a5c; background: #0f141b; color: #c8d4e2; font-size: 14px; }
-.mode-row button.active, .tool-row button.active { background: #0b3d91; border-color: #0b3d91; color: #fff; font-weight: 700; }
+
+/* ---- 拍摄控制区：浮在画面下的玻璃面板 ---- */
+.controls {
+  padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
+  background: rgba(13,18,26,.55);
+  -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+  border-top: 1px solid rgba(255,255,255,.10);
+  border-radius: 24px 24px 0 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 -8px 28px rgba(0,0,0,.35);
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: -14px; position: relative; z-index: 2;
+}
+/* 底部同一行三个控件：左圆钮（比例）/ 中间药丸（拍照·录像）/ 右圆钮（镜头·变焦） */
+.ctrl-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.circle-btn {
+  width: 56px; height: 56px; border-radius: 50%; flex: none;
+  border: 1px solid rgba(255,255,255,.22);
+  background: rgba(255,255,255,.1); color: #fff; font-size: 15px; font-weight: 700;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 4px 14px rgba(0,0,0,.35);
+}
+.ctrl-row .mode-row { flex: 1; max-width: 220px; }
+/* 模式切换：一段式胶囊 */
+.mode-row {
+  display: flex; gap: 4px; justify-content: center; align-self: center;
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.10);
+  border-radius: 999px; padding: 4px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+.mode-row button {
+  padding: 8px 22px; border-radius: 999px; border: none;
+  background: transparent; color: #c8d4e2; font-size: 14px; font-weight: 600;
+}
+.mode-row button.active {
+  background: rgba(255,255,255,.16); color: #fff; font-weight: 700;
+  box-shadow: 0 2px 10px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.22);
+}
 .shutter-row { display: flex; align-items: center; justify-content: space-around; }
-.shutter { width: 74px; height: 74px; border-radius: 50%; border: 4px solid #fff; background: #d33; font-size: 15px; color: #fff; font-weight: 700; }
-.shutter.rec { background: #d33; animation: pulse 1s infinite; }
-.shutter.photo { background: #fff; color: #111; }
-@keyframes pulse { 50% { opacity: .55; } }
+.shutter-row > button:not(.shutter) {
+  padding: 10px 14px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: #dbe5ef; font-size: 13px; font-weight: 600;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
+}
+/* 快门：红色大圆钮（白边红底）；录像/停止也保持红色系 */
+.shutter {
+  width: 76px; height: 76px; border-radius: 50%;
+  border: 5px solid rgba(255,255,255,.92);
+  background: #ff3b30; color: #fff; font-size: 15px; font-weight: 700;
+  box-shadow: 0 0 0 4px rgba(255,59,48,.3), 0 10px 26px rgba(255,59,48,.45), inset 0 2px 6px rgba(255,255,255,.25);
+}
+.shutter.rec {
+  background: #ff3b30; color: #fff;
+  animation: pulse 1s infinite;
+  box-shadow: 0 0 0 4px rgba(255,59,48,.3), 0 10px 26px rgba(255,59,48,.4);
+}
+@keyframes pulse { 50% { opacity: .6; } }
 .rec-time { font-size: 18px; font-variant-numeric: tabular-nums; min-width: 70px; text-align: center; }
 .tool-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.tool-row button {
+  padding: 9px 16px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: #dbe5ef; font-size: 13px; font-weight: 600;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16);
+}
 .tool-row button:disabled { opacity: .45; }
-.loc-line { font-size: 12px; color: #8fa1b5; text-align: center; }
-/* 作品列表 */
-.works { flex: 1; overflow-y: auto; padding: 10px 12px calc(16px + env(safe-area-inset-bottom)); }
-.works h2 { font-size: 15px; margin: 14px 2px 8px; color: #c8d4e2; }
+.loc-line { font-size: 12px; color: #8fa1b5; text-align: center; cursor: pointer; }
+/* 比例 / 镜头选择弹窗里的选项行 */
+.pick-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.pick-row button {
+  padding: 10px 18px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: #dbe5ef; font-size: 15px; font-weight: 700;
+}
+.pick-row button.active { background: rgba(47,140,255,.35); border-color: rgba(47,140,255,.7); color: #fff; }
+.pick-col { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.pick-col button {
+  padding: 12px 16px; border-radius: 14px; text-align: left;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: #dbe5ef; font-size: 14px; font-weight: 600;
+}
+.pick-col button.active { background: rgba(47,140,255,.35); border-color: rgba(47,140,255,.7); color: #fff; }
+.panel-sheet { margin-top: auto; }
+/* 改项目名称弹层：常驻 DOM，靠位移隐藏，点水印信息条时在点击手势内同步聚焦，直接弹输入法 */
+.edit-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  transform: translateY(105%); transition: transform .25s cubic-bezier(.32,.72,.35,1);
+  pointer-events: none;
+}
+.edit-sheet.open { transform: translateY(0); pointer-events: auto; }
+
+/* ---- 作品列表 ---- */
+.works { flex: 1; overflow-y: auto; padding: 12px 14px calc(16px + env(safe-area-inset-bottom)); }
+.works h2 { font-size: 14px; font-weight: 700; margin: 16px 2px 10px; color: #c8d4e2; letter-spacing: .02em; }
 .works h2:first-child { margin-top: 2px; }
-.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.cell { position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: #222; border: none; padding: 0; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cell {
+  position: relative; aspect-ratio: 1; border-radius: 16px; overflow: hidden;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); padding: 0;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+}
 .cell img, .cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.cell .tag { position: absolute; left: 4px; bottom: 4px; font-size: 11px; background: rgba(0,0,0,.65); padding: 2px 6px; border-radius: 4px; }
-.cell .vtag { position: absolute; right: 4px; top: 4px; font-size: 11px; background: rgba(0,0,0,.65); padding: 2px 6px; border-radius: 4px; }
-.empty { color: #8fa1b5; text-align: center; padding: 40px 0; font-size: 14px; line-height: 1.8; }
-/* 弹窗 */
-.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 50; display: flex; flex-direction: column; }
+.cell .tag, .cell .vtag {
+  position: absolute; font-size: 11px; font-weight: 600; color: #fff;
+  background: rgba(0,0,0,.45); padding: 3px 8px; border-radius: 999px;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.12);
+}
+.cell .tag { left: 6px; bottom: 6px; }
+.cell .vtag { right: 6px; top: 6px; }
+.empty { color: #8fa1b5; text-align: center; padding: 48px 0; font-size: 14px; line-height: 1.9; }
+.danger-text { color: #ff9a9a !important; }
+
+/* ---- 文件夹：可展开/收起、可删除，照片回到日期列表 ---- */
+.folder-bar { margin-bottom: 10px; }
+.folder-new { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.folder-new input, .settings-card input {
+  width: 100%; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08); color: #fff; font-size: 15px;
+}
+.folder-card {
+  border: 1px solid rgba(255,255,255,.12); border-radius: 18px;
+  background: rgba(255,255,255,.05);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+  margin-bottom: 12px; overflow: hidden;
+}
+.folder-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 12px 14px; background: none; border: none; color: #fff; font-size: 15px;
+}
+.folder-ic { font-size: 18px; }
+.folder-name { flex: 1; text-align: left; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-toggle { font-size: 13px; color: #9fb0c3; font-weight: 600; }
+.folder-card .grid { padding: 0 12px 12px; }
+.folder-del { margin: 0 12px 12px; }
+
+/* ---- 日期堆叠：前一天及更早默认叠成一摞卡片，点一下展开 ---- */
+.stack-card {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 12px; margin-bottom: 12px; text-align: left;
+  border: 1px solid rgba(255,255,255,.12); border-radius: 18px;
+  background: rgba(255,255,255,.05); color: #fff;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 4px 4px 0 rgba(255,255,255,.06), 8px 8px 0 rgba(255,255,255,.03);
+}
+.stack-card img { width: 52px; height: 52px; object-fit: cover; border-radius: 10px; flex: none; }
+.stack-ph { width: 52px; height: 52px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.1); font-size: 18px; }
+.stack-info { flex: 1; font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.stack-hint { font-size: 12px; color: #9fb0c3; }
+.stack-collapse { margin-bottom: 12px; }
+
+/* ---- 作品页内嵌设置：水印文字 + 高德 Key（顶栏的齿轮已去掉） ---- */
+.settings-card {
+  margin-top: 20px; padding: 16px;
+  border: 1px solid rgba(255,255,255,.12); border-radius: 18px;
+  background: rgba(255,255,255,.05);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.settings-card h2 { margin: 0; font-size: 16px; }
+.folder-move select {
+  padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08); color: #fff; font-size: 14px; max-width: 100%;
+}
+
+/* ---- 弹窗：毛玻璃底片 ---- */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0,0,0,.55);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  display: flex; flex-direction: column;
+}
 .modal-mask .view { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
 .modal-mask img, .modal-mask video { max-width: 100%; max-height: 100%; object-fit: contain; }
-.modal-meta { padding: 10px 14px; background: #1a212b; font-size: 13px; line-height: 1.7; color: #dbe5ef; max-height: 30%; overflow-y: auto; }
+.modal-meta {
+  padding: 14px 16px;
+  background: rgba(20,26,36,.72);
+  -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+  border-top: 1px solid rgba(255,255,255,.10);
+  font-size: 13px; line-height: 1.75; color: #dbe5ef;
+  max-height: 30%; overflow-y: auto;
+}
 .modal-meta .miss { color: #ffcf5c; }
-.modal-actions { display: flex; gap: 8px; padding: 12px 14px calc(14px + env(safe-area-inset-bottom)); background: #1a212b; flex-wrap: wrap; }
-.modal-actions button { flex: 1; min-width: 70px; padding: 12px 6px; border-radius: 8px; border: 1px solid #3a4a5c; background: #0f141b; color: #fff; font-size: 14px; }
-.modal-actions button.primary { background: #0b3d91; border-color: #0b3d91; }
-.modal-actions button.danger { background: #7a1f1f; border-color: #7a1f1f; }
-.toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: rgba(0,0,0,.85); color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 14px; z-index: 99; max-width: 88vw; text-align: center; }
-.settings { padding: 12px 14px; background: #141a21; font-size: 13px; color: #9fb0c3; display: flex; gap: 8px; align-items: center; }
-.settings input { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid #3a4a5c; background: #0f141b; color: #fff; font-size: 13px; }
+.modal-actions {
+  display: flex; gap: 8px; padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+  background: rgba(20,26,36,.72);
+  -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+  flex-wrap: wrap;
+}
+.modal-actions button {
+  flex: 1; min-width: 70px; padding: 13px 6px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: #fff; font-size: 14px; font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+}
+.modal-actions button.primary {
+  background: linear-gradient(135deg, #2f8cff, #0a64d8); border-color: transparent;
+  box-shadow: 0 4px 16px rgba(47,140,255,.35), inset 0 1px 0 rgba(255,255,255,.3);
+}
+.modal-actions button.danger {
+  background: rgba(255,59,48,.16); border-color: rgba(255,59,48,.45); color: #ff9d97;
+}
+.toast {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%);
+  background: rgba(20,26,36,.78); color: #fff; padding: 11px 18px; border-radius: 999px;
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: 0 8px 24px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.16);
+  font-size: 14px; z-index: 99; max-width: 88vw; text-align: center;
+}
+
+/* ---- 设置：底部弹出的玻璃卡片 ---- */
+.settings-sheet { justify-content: flex-end; }
+.sheet {
+  width: 100%; max-width: 560px; margin: 0 auto;
+  background: rgba(22,28,40,.75);
+  -webkit-backdrop-filter: blur(28px) saturate(180%); backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255,255,255,.14); border-bottom: none;
+  border-radius: 28px 28px 0 0;
+  box-shadow: 0 -12px 44px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.16);
+  padding: 12px 20px calc(20px + env(safe-area-inset-bottom));
+}
+.sheet::before {
+  content: ""; display: block; width: 40px; height: 4px; border-radius: 999px;
+  background: rgba(255,255,255,.28); margin: 0 auto 14px;
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.sheet-head h2 { font-size: 19px; font-weight: 800; margin: 0; }
+.sheet-close {
+  width: 32px; height: 32px; border-radius: 50%; border: none;
+  background: rgba(255,255,255,.12); color: #fff; font-size: 14px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+}
+.field { display: block; margin: 18px 0; }
+.field-label { display: block; font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+.field-desc { display: block; font-size: 12px; line-height: 1.6; color: #8fa1b5; margin-bottom: 10px; }
+.field-row { display: flex; gap: 8px; }
+.field input, .sheet input {
+  flex: 1; min-width: 0; padding: 12px 14px; font-size: 15px; border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.07); color: #fff; outline: none;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+.field input:focus, .sheet input:focus {
+  border-color: rgba(47,140,255,.75);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 0 0 4px rgba(47,140,255,.18);
+}
+button.ghost {
+  padding: 0 16px; border-radius: 14px; flex: none;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.08); color: #dbe5ef; font-size: 13px; font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14);
+}
+button.primary.wide {
+  width: 100%; padding: 14px; border-radius: 16px; border: none;
+  background: linear-gradient(135deg, #2f8cff, #0a64d8); color: #fff;
+  font-size: 16px; font-weight: 700;
+  box-shadow: 0 6px 20px rgba(47,140,255,.4), inset 0 1px 0 rgba(255,255,255,.3);
+}
+
+/* PWA 安装提示条（液态玻璃小横幅） */
+.a2hs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #fff;
+  background: rgba(20, 40, 80, 0.55);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.a2hs span { flex: 1; }
+.a2hs-install {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: none;
+  background: #2f8cff;
+  color: #fff;
+  font-size: 13px;
+}
+.a2hs-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+}

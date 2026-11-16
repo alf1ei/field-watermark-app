@@ -1,4 +1,4 @@
-# 现场水印by ccj
+# 长江现场水印相机
 
 独立跨平台现场拍照 App（iOS + Android），不依赖 LIMS，不用登录，打开就能拍。
 
@@ -8,21 +8,23 @@
 - **拍照**：一次拍一张，拍完预览，能删了重拍。照片同时存在 App 内作品列表和手机相册里，没网也能拍、存手机。
 - **水印（真烧进像素）**：GSZD 大号半透明白色，约 -30° 居中斜压在画面中间；底部半透明黑条写项目名称、时间（`YYYY-MM-DD HH:mm:ss` 本地时间）、经纬度（度分秒，如 `106°56′09″E 36°03′21″N`）、地址。
   - 定位：GPS（WGS-84）→ 转 GCJ-02 → 逆地理编码。
-  - 地址只能来自逆地理编码服务返回的结果，拿不到就留空，绝不凭坐标编造。没网时地址留空，作品列表里有「补地址」按钮，有网时点一下重试。
+  - 地址只能来自逆地理编码服务返回的结果，拿不到就留空，绝不凭坐标编造。没网时地址留空，有网后打开页面会自动补上（后台持续定位）。作品页已取消「补地址」（v1.0.3，用户要求）。
+  - 地址短格式：省＋市＋县区＋下一级（街道/小区等），如“甘肃省庆阳市西峰区南街街道”。
+  - 定位三级兜底：高精度 → 普通定位（Wi-Fi/基站）→ 缓存位置；打开页面后后台持续监听，拍照时定位没完会等它完成再拍。
   - 逆地理编码顺序：高德 restapi（需在作品页自填 Key，没有 Key 直接跳过，不写死假 Key）→ Nominatim（OpenStreetMap，无需 Key）。
   - 照片最长边 >2400px 等比缩小，导出 JPEG 0.92。
 - **视频**：也要水印，同一版式，1080p（1920×1080 画布逐帧烧录后经 `canvas.captureStream + MediaRecorder` 录制），拍完能预览、能删，时长不限。输出为 webm（Chrome/WebView 的 MediaRecorder 原生格式；iOS 端如需 mp4 见下文“已知限制”）。
-- **作品列表**：按项目名分组，缩略图，点开大图/播放视频，单张删除、补地址、分享/导出。
+- **作品列表**：按项目名分组，缩略图，点开大图/播放视频，单张删除、分享/导出。
 - **QQ 群自动上传：已砍掉**（QQ 没有官方接口能让第三方 App 自动同步到群里）。
 
 ## 技术栈
 
-Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `现场水印by ccj`，版本 1.0.0。
+Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 2.1.0。
 
 - 相机：App 内 `getUserMedia` 实时取景（可叠加实时水印预览，所见即所得）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。
 - 定位：`@capacitor/geolocation`，失败回退浏览器 Geolocation。
 - 存储：`@capacitor/filesystem`（`Directory.Data/works/`）+ localStorage 记录列表；相册保存用 `@capacitor-community/media`（走系统 MediaStore），失败时退到外部共享目录，再失败则只存 App 内并明确提示。
-- 补地址：照片保留了一份无水印原图（`_orig.jpg`，仅 App 内），补上地址后用原图重新烧录；视频不重新渲染，只补记录文字（相册里的旧图不变，界面有说明）。
+- 原图留存：照片另存一份无水印原图（`_orig.jpg`，仅 App 内，不进相册），目前未被界面功能使用，留作备用。
 
 ## 目录结构
 
@@ -33,7 +35,7 @@ field-watermark-app/
 │   ├── main.js / style.css
 │   ├── components/
 │   │   ├── CameraView.vue       拍摄主界面（取景、水印预览、拍照、录像、系统相机兜底）
-│   │   └── WorksList.vue        作品列表（分组、查看、删除、补地址、分享、高德 Key 设置）
+│   │   └── WorksList.vue        作品列表（分组、查看、删除、分享、高德 Key 设置）
 │   └── utils/
 │       ├── geo.js               WGS-84→GCJ-02、度分秒、时间格式、定位、逆地理编码
 │       ├── watermark.js         drawWatermark / burnPhotoWatermark / drawVideoFrame
@@ -98,7 +100,7 @@ npx cap sync ios     # 需要 CocoaPods，会装 Capacitor 各插件的 Pod
 # 选 Team（苹果开发者账号），真机或 Archive → Distribute App → App Store Connect / TestFlight
 ```
 
-iOS 工程已就绪：Bundle ID `com.gszd.fieldwatermark`，显示名 `现场水印by ccj`，`Info.plist` 已写好相机/麦克风/定位/相册权限说明。
+iOS 工程已就绪：Bundle ID `com.gszd.fieldwatermark`，显示名 `长江现场水印相机`，`Info.plist` 已写好相机/麦克风/定位/相册权限说明。
 
 ## 上架应用商店（本次未做，需要用户准备）
 

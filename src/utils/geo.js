@@ -41,6 +41,20 @@ export function wgs84ToGcj02(lon, lat) {
   return { lon: lon + adjLon, lat: lat + adjLat }
 }
 
+/** GCJ-02 → WGS-84（逆变换，两次迭代逼近，往返误差 < 1 米；中国境外直接返回原值） */
+export function gcj02ToWgs84(lon, lat) {
+  if (outOfChina(lon, lat)) return { lon, lat }
+  // 迭代逼近：从目标点出发猜一个 WGS 点，正向加密后与目标比，差多少就反向修正猜测；
+  // 2 轮后残差在厘米级。注意不能用“最后一次残差”直接减目标点，那会把结果还原回输入。
+  let wLon = lon, wLat = lat
+  for (let i = 0; i < 2; i++) {
+    const g = wgs84ToGcj02(wLon, wLat)
+    wLon -= g.lon - lon
+    wLat -= g.lat - lat
+  }
+  return { lon: wLon, lat: wLat }
+}
+
 // ---- 度分秒 ----
 // 106.9359 → 106°56′09″E ；36.0559 → 36°03′21″N
 export function toDMS(value, isLat) {
@@ -64,26 +78,133 @@ export function formatTime(date = new Date()) {
 }
 
 // ---- 定位 ----
-export async function getPosition() {
-  // 优先 Capacitor Geolocation（真机），失败回退浏览器 API
+// 策略（2026-11-16 用户反馈：个别手机一次高精度定位拿不到）：
+// 高精度 → 普通精度（Wi-Fi/基站）→ 缓存位置，三级兜底，不只试一次就放弃。
+function capacitorPosition(opts) {
+  return import('@capacitor/geolocation').then(({ Geolocation }) =>
+    Geolocation.getCurrentPosition(opts).then((pos) => ({
+      lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'capacitor'
+    }))
+  )
+}
+function browserPosition(opts) {
+  if (!navigator.geolocation) throw new Error('当前环境不支持定位')
+  return new Promise((resolve, reject) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'browser' }),
+      (err) => reject(err),
+      opts
+    )
+  })
+}
+async function tryPosition(opts) {
   try {
-    const { Geolocation } = await import('@capacitor/geolocation')
-    const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 })
-    return { lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'capacitor' }
-  } catch (e) { /* fall through */ }
-  if (navigator.geolocation) {
-    return await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'browser' }),
-        (err) => reject(err),
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
-      )
-    })
-  }
-  throw new Error('当前环境不支持定位')
+    return await capacitorPosition(opts)
+  } catch { /* 真机失败时回退浏览器 API */ }
+  return await browserPosition(opts)
 }
 
-// ---- 逆地理编码（拿不到就返回空字符串，绝不编造） ----
+export async function getPosition() {
+  const attempts = [
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 5000 },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 }
+  ]
+  let lastErr = null
+  for (const opts of attempts) {
+    try {
+      return await tryPosition(opts)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr || new Error('定位失败')
+}
+
+// 后台持续监听：GPS 热起来后自动补上经纬度/地址。返回停止函数。
+// 优先 Capacitor watchPosition（真机/网页都可用），起不来才回退浏览器监听，避免两路重复回调。
+export function watchPosition(onUpdate, onError) {
+  const opts = { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+  const emit = (lon, lat, accuracy, source) => {
+    try { onUpdate({ lon, lat, accuracy, source }) } catch { /* 回调异常不中断监听 */ }
+  }
+  let stopped = false
+  let stopCap = null
+  let watchId = null
+  const startBrowserWatch = () => {
+    if (stopped || !navigator.geolocation || watchId != null) return
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => emit(pos.coords.longitude, pos.coords.latitude, pos.coords.accuracy, 'browser'),
+      (err) => { if (onError) onError(err) },
+      opts
+    )
+  }
+  import('@capacitor/geolocation').then(({ Geolocation }) =>
+    Geolocation.watchPosition(opts, (pos, err) => {
+      if (stopped) return
+      if (err) { if (onError) onError(err); return }
+      if (pos) emit(pos.coords.longitude, pos.coords.latitude, pos.coords.accuracy, 'capacitor')
+    }).then((id) => { stopCap = id }).catch(startBrowserWatch)
+  ).catch(startBrowserWatch)
+  return () => {
+    stopped = true
+    if (watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(watchId)
+    if (stopCap != null) {
+      import('@capacitor/geolocation').then(({ Geolocation }) => Geolocation.clearWatch({ id: stopCap })).catch(() => {})
+    }
+  }
+}
+
+// ---- 地址短格式（2026-11-16 用户要求）：5 级——省 + 市 + 区县 + 下一级（街道/镇）
+// + 再详细一级（道路/小区/派出所/社区），不拼门牌号等长串。超过 5 段只留前 5 段。
+export function shortenAddressFromParts(parts) {
+  const seen = new Set()
+  const out = []
+  for (const p of parts) {
+    const s = String(p || '').trim()
+    if (!s || s === '中国' || s === '中华人民共和国') continue
+    if (seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
+    if (out.length >= 5) break
+  }
+  return out.join('')
+}
+
+// 高德 regeocode → 5 级短地址；第 5 级是道路名（不带门牌号），有小区/建筑名就接着拼上，
+// 街道和地点都没有时用最近的 POI（常是派出所/小区）兜底。
+export function formatAmapAddress(regeocode, pois = []) {
+  const ac = (regeocode && regeocode.addressComponent) || {}
+  const township = (ac.township || '').replace(/办事处$/, '')
+  const street = ac.street || ''
+  const place = (ac.building && ac.building.name) || (ac.neighborhood && ac.neighborhood.name) || ''
+  let detail = ''
+  if (street && place && place !== street) detail = street + place
+  else detail = street || place
+  if (!detail && pois && pois.length) detail = (pois[0] && pois[0].name) || ''
+  const short = shortenAddressFromParts([ac.province, ac.city, ac.district, township, detail])
+  return short || (regeocode && regeocode.formatted_address) || ''
+}
+
+// Nominatim address 对象（addressdetails=1）→ 5 级短地址；无结构化字段时把 display_name
+//（由细到粗的逗号串）倒过来取前 5 段，同样是省 + 市 + 区县 + 下一级 + 再详细一级。
+export function formatNominatimAddress(j) {
+  const a = (j && j.address) || {}
+  if (a && (a.state || a.city || a.county)) {
+    const city = a.city || a.town || a.municipality || ''
+    const county = a.county || a.state_district || ''
+    const district = a.city_district || a.district || a.suburb || ''
+    const road = a.road || a.pedestrian || ''
+    const place = a.neighbourhood || a.amenity || a.building || a.village || a.hamlet || ''
+    const detail = road && place && place !== road ? road + place : (road || place)
+    return shortenAddressFromParts([a.state, city, county, district, detail])
+  }
+  if (j && j.display_name) {
+    const parts = j.display_name.split(',').map((s) => s.trim()).reverse()
+    return shortenAddressFromParts(parts)
+  }
+  return ''
+}
 // 高德 Key 由使用者在设置里自填，存在 localStorage；没有 Key 时直接跳过，不写死假 Key。
 export function getAmapKey() {
   try { return localStorage.getItem('fw_amap_key') || '' } catch { return '' }
@@ -115,19 +236,22 @@ export async function reverseGeocode(gcjLon, gcjLat) {
       const j = await fetchWithTimeout(
         `https://restapi.amap.com/v3/geocode/regeo?key=${encodeURIComponent(amapKey)}&location=${gcjLon},${gcjLat}&extensions=base&output=json`
       )
-      if (j && j.status === '1' && j.regeocode && j.regeocode.formatted_address) {
-        return j.regeocode.formatted_address
+      if (j && j.status === '1' && j.regeocode) {
+        const short = formatAmapAddress(j.regeocode, j.regeocode.pois || [])
+        if (short) return short
       }
     } catch { /* 掉到下一个源 */ }
   }
-  // 2) Nominatim（OpenStreetMap，无需 Key；注意入参用 WGS-84，这里传入 GCJ-02 会有约几百米偏移，
-  //    国内使用建议填高德 Key；无 Key 时仍尽力返回一个地址，拿不到则留空）
+  // 2) Nominatim（OpenStreetMap，无需 Key；入参用 WGS-84，先把 GCJ-02 转回去再调，
+  //    否则国内会有约几百米偏移；无 Key 时仍尽力返回一个地址，拿不到则留空）
   try {
+    const wgs = gcj02ToWgs84(gcjLon, gcjLat)
     const j = await fetchWithTimeout(
-      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${gcjLat}&lon=${gcjLon}&accept-language=zh-CN&zoom=18`,
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${wgs.lat}&lon=${wgs.lon}&accept-language=zh-CN&zoom=18&addressdetails=1`,
       8000
     )
-    if (j && j.display_name) return j.display_name
+    const short = formatNominatimAddress(j)
+    if (short) return short
   } catch { /* ignore */ }
   return ''
 }

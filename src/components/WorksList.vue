@@ -1,26 +1,87 @@
 <template>
   <div class="works">
-    <div v-if="groups.length === 0" class="empty">
-      还没有作品<br />去“拍摄”拍第一张带 GSZD 水印的照片或视频吧
+    <div class="folder-bar">
+      <button class="ghost" @click="showNewFolder = !showNewFolder">＋新建文件夹</button>
     </div>
-    <template v-for="g in groups" :key="g.project">
-      <h2>{{ g.project || '（未填项目名称）' }}（{{ g.items.length }}）</h2>
-      <div class="grid">
-        <button v-for="it in g.items" :key="it.id" class="cell" @click="openDetail(it)">
-          <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
-          <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
-          <span v-else class="tag">照片</span>
-          <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
-          <span class="tag">{{ it.time.slice(5, 16) }}</span>
+    <div v-if="showNewFolder" class="folder-new">
+      <input v-model="newFolderName" placeholder="文件夹名字，比如：西峰区采样" @keyup.enter="doCreateFolder" />
+      <button class="primary wide" @click="doCreateFolder">创建</button>
+    </div>
+
+    <template v-for="f in foldersWithItems" :key="f.id">
+      <div class="folder-card">
+        <button class="folder-head" @click="toggleFolder(f.id)">
+          <span class="folder-ic">📁</span>
+          <span class="folder-name">{{ f.name }}</span>
+          <span class="count-badge">{{ f.items.length }}</span>
+          <span class="folder-toggle">{{ expandedFolders.has(f.id) ? '收起' : '展开' }}</span>
         </button>
+        <template v-if="expandedFolders.has(f.id)">
+          <div class="grid">
+            <button v-for="it in f.items" :key="it.id" class="cell" @click="openDetail(it)">
+              <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
+              <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
+              <span v-else class="tag">照片</span>
+              <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
+              <span class="tag">{{ it.time.slice(5, 16) }}</span>
+            </button>
+          </div>
+          <button class="ghost folder-del" @click="doDeleteFolder(f)">删除文件夹（照片回到日期列表）</button>
+        </template>
       </div>
     </template>
 
-    <div class="settings">
-      <span>高德 Key（可选，用于更准的国内地址）：</span>
-      <input v-model="amapKey" placeholder="没有可不填，将用 OpenStreetMap" @change="saveAmapKey" />
+    <template v-for="g in dateGroups" :key="g.date">
+      <template v-if="g.date === today">
+        <h2>{{ g.date }}（今天，{{ g.items.length }}）</h2>
+        <div class="grid">
+          <button v-for="it in g.items" :key="it.id" class="cell" @click="openDetail(it)">
+            <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
+            <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
+            <span v-else class="tag">照片</span>
+            <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
+            <span class="tag">{{ it.time.slice(5, 16) }}</span>
+          </button>
+        </div>
+      </template>
+      <template v-else-if="!expandedStacks.has(g.date)">
+        <button class="stack-card" @click="expandedStacks.add(g.date)">
+          <img v-if="g.items[0] && g.items[0].thumb" :src="g.items[0].thumb" />
+          <span v-else class="stack-ph">▶</span>
+          <span class="stack-info">{{ g.date }}<span class="count-badge">{{ g.items.length }}</span></span>
+          <span class="stack-hint">点一下展开</span>
+        </button>
+      </template>
+      <template v-else>
+        <h2>{{ g.date }}（{{ g.items.length }}）</h2>
+        <div class="grid">
+          <button v-for="it in g.items" :key="it.id" class="cell" @click="openDetail(it)">
+            <img v-if="it.type === 'photo' && it.thumb" :src="it.thumb" />
+            <video v-else-if="it.type === 'video'" :src="videoUrl(it)" muted playsinline preload="metadata"></video>
+            <span v-else class="tag">照片</span>
+            <span class="vtag" v-if="it.type === 'video'">▶ 视频</span>
+            <span class="tag">{{ it.time.slice(5, 16) }}</span>
+          </button>
+        </div>
+        <button class="ghost stack-collapse" @click="expandedStacks.delete(g.date)">收起堆叠</button>
+      </template>
+    </template>
+
+    <div v-if="records.length === 0" class="empty">
+      还没有作品<br />去“拍摄”拍第一张带 GSZD 水印的照片或视频吧
     </div>
-    <div class="hint">地址说明：无网络时地址留空是正常的；有网后点开作品 →“补地址”可重试获取。视频的地址只补记录文字，不重新渲染视频。</div>
+
+    <div class="settings-card">
+      <h2>设置</h2>
+      <label class="field-label">斜水印文字（默认 GSZD，可改成其他文字）</label>
+      <div class="field-row">
+        <input v-model="wmText" @change="saveWmText" placeholder="GSZD" />
+        <button class="ghost" @click="resetWmText">恢复默认</button>
+      </div>
+      <label class="field-label">高德 Key（可选，用于更准的国内地址）</label>
+      <input v-model="amapKey" @change="saveAmapKey" placeholder="没有可不填，将用 OpenStreetMap" />
+      <div class="field-desc">地址格式：省＋市＋区县＋下一级（街道/镇）＋再详细一级（道路/小区/派出所/社区）。无网络时地址留空是正常的。</div>
+    </div>
   </div>
 
   <div v-if="detail" class="modal-mask">
@@ -35,9 +96,14 @@
       <div>地址：<span v-if="detail.address">{{ detail.address }}</span><span v-else class="miss">（未获取到）</span></div>
       <div>保存：App 内 ✓　{{ detail.gallery === 'gallery' ? '手机相册 ✓' : '手机相册 ✗（' + (detail.galleryNote || '仅存 App 内') + '）' }}</div>
       <div>文件：{{ detail.path }}</div>
+      <div class="folder-move">文件夹：
+        <select v-model="detailFolder" @change="moveDetailFolder">
+          <option value="">不归档（按日期显示）</option>
+          <option v-for="f in folders" :key="f.id" :value="f.id">{{ f.name }}</option>
+        </select>
+      </div>
     </div>
     <div class="modal-actions">
-      <button class="primary" @click="fillAddress" :disabled="addrBusy">{{ addrBusy ? '获取中…' : '补地址' }}</button>
       <button @click="shareDetail">分享 / 导出</button>
       <button class="danger" @click="deleteDetail">删除</button>
       <button @click="detail = null">关闭</button>
@@ -51,16 +117,27 @@
 import { ref, computed, onMounted } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory } from '@capacitor/filesystem'
-import { loadRecords, saveRecords, deleteAppFile, readAppFile, shareFile } from '../utils/store.js'
-import { toDMS, reverseGeocode } from '../utils/geo.js'
-import { burnPhotoWatermark } from '../utils/watermark.js'
+import {
+  loadRecords, saveRecords, deleteAppFile, readAppFile, shareFile,
+  getFolders, createFolder, deleteFolder, getPhotoFolderMap, getPhotoFolder, setPhotoFolder,
+  getWatermarkText, setWatermarkText
+} from '../utils/store.js'
+import { toDMS, getAmapKey, setAmapKey, formatTime } from '../utils/geo.js'
 
 const records = ref([])
 const detail = ref(null)
 const detailUrl = ref('')
+const detailFolder = ref('')
 const toast = ref('')
-const addrBusy = ref(false)
-const amapKey = ref('')
+const folders = ref([])
+const photoFolder = ref({})
+const expandedFolders = ref(new Set())
+const expandedStacks = ref(new Set())
+const showNewFolder = ref(false)
+const newFolderName = ref('')
+const wmText = ref(getWatermarkText())
+const amapKey = ref(getAmapKey())
+const today = formatTime().slice(0, 10)
 
 let toastTimer = null
 function showToast(msg, ms = 3500) {
@@ -69,17 +146,29 @@ function showToast(msg, ms = 3500) {
   toastTimer = setTimeout(() => (toast.value = ''), ms)
 }
 
-const groups = computed(() => {
+// 文件夹（带照片）+ 未归档照片按日期倒序分组；今天直接展开，前一天及更早默认堆叠。
+const foldersWithItems = computed(() =>
+  folders.value.map((f) => ({
+    ...f,
+    items: records.value.filter((r) => photoFolder.value[r.id] === f.id)
+  }))
+)
+const dateGroups = computed(() => {
   const map = new Map()
   for (const r of records.value) {
-    const k = r.project || ''
-    if (!map.has(k)) map.set(k, { project: k, items: [] })
-    map.get(k).items.push(r)
+    if (photoFolder.value[r.id]) continue
+    const d = (r.time || '').slice(0, 10) || '未知日期'
+    if (!map.has(d)) map.set(d, { date: d, items: [] })
+    map.get(d).items.push(r)
   }
-  return [...map.values()]
+  return [...map.values()].sort((a, b) => (a.date < b.date ? 1 : -1))
 })
 
-function refresh() { records.value = loadRecords() }
+function refresh() {
+  records.value = loadRecords()
+  folders.value = getFolders()
+  photoFolder.value = getPhotoFolderMap()
+}
 
 function videoUrl(it) {
   // 列表里视频用 file:// 直链大多播不了，这里只给占位：用缩略图逻辑
@@ -99,72 +188,107 @@ async function fileSrc(it) {
 
 async function openDetail(it) {
   detail.value = it
+  detailFolder.value = getPhotoFolder(it.id)
   detailUrl.value = await fileSrc(it)
+}
+
+function doCreateFolder() {
+  const f = createFolder(newFolderName.value)
+  if (!f) { showToast('先输入文件夹名字'); return }
+  newFolderName.value = ''
+  showNewFolder.value = false
+  expandedFolders.value.add(f.id)
+  refresh()
+  showToast(`已新建文件夹「${f.name}」`)
+}
+
+function doDeleteFolder(f) {
+  deleteFolder(f.id)
+  expandedFolders.value.delete(f.id)
+  refresh()
+  showToast(`已删除文件夹「${f.name}」，照片回到日期列表`)
+}
+
+function toggleFolder(id) {
+  if (expandedFolders.value.has(id)) expandedFolders.value.delete(id)
+  else expandedFolders.value.add(id)
+}
+
+function moveDetailFolder() {
+  if (!detail.value) return
+  setPhotoFolder(detail.value.id, detailFolder.value)
+  refresh()
+  showToast(detailFolder.value ? '已移动到文件夹' : '已移回日期列表')
 }
 
 async function deleteDetail() {
   if (!detail.value) return
   await deleteAppFile(detail.value.path)
   if (detail.value.origPath) await deleteAppFile(detail.value.origPath)
+  setPhotoFolder(detail.value.id, '')
   records.value = records.value.filter((x) => x.id !== detail.value.id)
   saveRecords(records.value)
   detail.value = null
+  refresh()
   showToast('已删除')
 }
 
-async function fillAddress() {
-  if (!detail.value || detail.value.lon == null) { showToast('这条记录没有经纬度，无法补地址'); return }
-  addrBusy.value = true
-  try {
-    // 记录里的 lon/lat 已是 GCJ-02，直接逆编码，不要再转换
-    const lon = detail.value.lon
-    const lat = detail.value.lat
-    const addr = await reverseGeocode(lon, lat)
-    if (!addr) { showToast('还是拿不到地址，请检查网络后重试'); return }
-    detail.value.address = addr
-    if (detail.value.type === 'photo' && detail.value.origPath) {
-      // 用原图重新烧录，把补上的地址写进图片
-      const origUrl = await readAppFile(detail.value.origPath, 'image/jpeg')
-      const meta = { project: detail.value.project, time: detail.value.time, lon, lat, address: addr }
-      const { blob } = await burnPhotoWatermark(origUrl, meta)
-      const base64 = await new Promise((resolve, reject) => {
-        const r = new FileReader()
-        r.onload = () => resolve(String(r.result).split(',')[1])
-        r.onerror = reject
-        r.readAsDataURL(blob)
-      })
-      await Filesystem.writeFile({ path: detail.value.path, data: base64, directory: Directory.Data })
-      detailUrl.value = await fileSrc(detail.value)
-      showToast('地址已补上，图片已重新烧录（相册里的旧图不变）')
-    } else {
-      showToast(detail.value.type === 'video' ? '地址已补到记录里（视频文件不重新渲染）' : '地址已补到记录里')
-    }
-    saveRecords(records.value)
-  } catch (e) {
-    showToast('补地址失败：' + (e && e.message ? e.message : e))
-  } finally {
-    addrBusy.value = false
-  }
+function saveWmText() {
+  setWatermarkText(wmText.value)
+  wmText.value = getWatermarkText()
+  showToast('水印文字已更新，新拍的照片生效')
+}
+function resetWmText() {
+  setWatermarkText('')
+  wmText.value = getWatermarkText()
+  showToast('水印文字已恢复默认 GSZD')
+}
+function saveAmapKey() {
+  setAmapKey(amapKey.value)
+  showToast('高德 Key 已保存')
 }
 
 async function shareDetail() {
   if (!detail.value) return
-  try {
-    const { uri } = await Filesystem.getUri({ path: detail.value.path, directory: Directory.Data })
-    await shareFile(uri, detail.value.path.split('/').pop())
-  } catch (e) {
-    showToast('分享失败：' + (e && e.message ? e.message : e))
+  // 原生 App：走 Capacitor 分享（可直接存相册/发微信）
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { uri } = await Filesystem.getUri({ path: detail.value.path, directory: Directory.Data })
+      await shareFile(uri, detail.value.path.split('/').pop())
+    } catch (e) {
+      showToast('分享失败：' + (e && e.message ? e.message : e))
+    }
+    return
   }
-}
-
-function saveAmapKey() {
-  try { localStorage.setItem('fw_amap_key', amapKey.value.trim()) } catch { /* ignore */ }
-  showToast(amapKey.value.trim() ? '高德 Key 已保存' : '已清除高德 Key')
+  // 网页版：优先用系统分享（iPhone 上可直接选“存储到照片/视频”进相册），不支持时退到下载
+  try {
+    const mime = detail.value.type === 'video' ? (detail.value.mime || 'video/webm') : 'image/jpeg'
+    const dataUrl = await readAppFile(detail.value.path, mime)
+    const blob = await (await fetch(dataUrl)).blob()
+    const fileName = detail.value.path.split('/').pop()
+    const file = new File([blob], fileName, { type: blob.type })
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: fileName })
+        return
+      } catch (e) {
+        if (e && e.name === 'AbortError') return // 用户自己取消分享，不算失败
+      }
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+    showToast('已开始下载；iPhone 上下载完点分享 → 存储到照片/视频即可进相册')
+  } catch (e) {
+    showToast('导出失败：' + (e && e.message ? e.message : e))
+  }
 }
 
 onMounted(() => {
   refresh()
-  try { amapKey.value = localStorage.getItem('fw_amap_key') || '' } catch { /* ignore */ }
 })
 defineExpose({ refresh })
 </script>

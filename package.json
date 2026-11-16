@@ -11,8 +11,9 @@
     "@capacitor/share": "^7.0.2",
     "vue": "^3.5.13"
   },
-  "description": "现场水印by ccj — 独立跨平台现场拍照 App（iOS + Android），GSZD 斜水印 + 时间/经纬度/地址，照片与视频均真烧录水印",
+  "description": "长江现场水印相机 — 独立跨平台现场拍照 App（iOS + Android），GSZD 斜水印 + 时间/经纬度/地址，照片与视频均真烧录水印",
   "devDependencies": {
+    "@capacitor/assets": "^4.0.0",
     "@capacitor/cli": "^7.4.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "canvas": "^3.2.3",
@@ -28,8 +29,9 @@
     "sync": "npx cap sync",
     "sync:android": "npx cap sync android",
     "sync:ios": "npx cap sync ios",
-    "verify": "node scripts/verify-watermark.mjs"
+    "verify": "node scripts/verify-watermark.mjs",
+    "verify:pwa": "node scripts/verify-pwa.mjs"
   },
   "type": "module",
-  "version": "1.0.0"
+  "version": "2.1.0"
 }
