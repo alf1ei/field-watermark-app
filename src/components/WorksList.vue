@@ -101,7 +101,7 @@
 
   <div v-if="detail" class="modal-mask">
     <div class="view">
-      <img v-if="detail.type === 'photo'" :src="detailUrl" />
+      <img v-if="detail.type === 'photo'" :src="detailUrl" @click="onDetailImageTap" />
       <video v-else :src="detailUrl" controls autoplay></video>
     </div>
     <div class="modal-meta">
@@ -127,6 +127,23 @@
 
   <div v-if="toast" class="toast">{{ toast }}</div>
 
+  <!-- 详情页连点 7 次编辑文字：项目名称 / 时间 / 地址可改，经纬度是实测记录不给改 -->
+  <div v-if="editSheet" class="modal-mask" @click.self="editSheet = null">
+    <div class="sheet panel-sheet">
+      <div class="sheet-head"><h2>编辑照片文字</h2><button class="sheet-close" @click="editSheet = null">✕</button></div>
+      <label class="field-label">项目名称</label>
+      <div class="field-row"><input v-model="editProject" placeholder="项目名称" /></div>
+      <label class="field-label">时间</label>
+      <div class="field-row"><input type="datetime-local" step="1" v-model="editTimeLocal" /></div>
+      <label class="field-label">地址</label>
+      <div class="field-row"><input v-model="editAddress" placeholder="地址（留空则不显示地址行）" /></div>
+      <div class="field-desc">经纬度是实测记录，不能改。保存后用留存的无水印原图重新烧水印，App 内和相册里的照片都会更新。</div>
+      <div class="field-desc">经度：{{ editLonText }}　纬度：{{ editLatText }}</div>
+      <div style="height:8px"></div>
+      <button class="primary wide" :disabled="editSaving" @click="saveDetailEdit">{{ editSaving ? '保存中…' : '保存' }}</button>
+    </div>
+  </div>
+
   <div v-if="dragging" class="drag-badge" :style="{ left: dragging.x + 'px', top: dragging.y + 'px' }">📁 {{ dragging.n }} 张</div>
 </template>
 
@@ -138,9 +155,10 @@ import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/
 import {
   loadRecords, saveRecords, deleteAppFile, readAppFile, shareFile,
   getFolders, createFolder, deleteFolder, getPhotoFolderMap, getPhotoFolder, setPhotoFolder,
-  getWatermarkText, setWatermarkText
+  getWatermarkText, setWatermarkText, saveToAppStorage, saveToGallery
 } from '../utils/store.js'
-import { toDMS, getAmapKey, setAmapKey, formatTime } from '../utils/geo.js'
+import { toDMS, getAmapKey, setAmapKey, formatTime, normalizeTimeText } from '../utils/geo.js'
+import { burnPhotoWatermark } from '../utils/watermark.js'
 
 const records = ref([])
 const detail = ref(null)
@@ -157,6 +175,121 @@ const wmText = ref(getWatermarkText())
 const amapKey = ref(getAmapKey())
 const today = formatTime().slice(0, 10)
 const worksEl = ref(null)
+
+// ---- 详情页连点 7 次编辑文字 ----
+// 点进一张照片，在详情大图上 3 秒内连续点 7 次，打开编辑：项目名称 / 时间 / 地址可改，
+// 经纬度是实测记录不给改。时间用日期时间输入（保持 YYYY-MM-DD HH:mm:ss 格式）。
+// 保存后用 App 内留存的无水印原图（_orig.jpg）重新烧水印并替换这张照片。
+// 第 3、4 次点击给轻提示“再点 N 次可编辑文字”；只对照片生效（视频没有原图可重烧）。
+const editSheet = ref(null) // 正在编辑的记录
+const editProject = ref('')
+const editTimeLocal = ref('') // datetime-local 的值：YYYY-MM-DDTHH:mm:ss
+const editAddress = ref('')
+const editLonText = ref('')
+const editLatText = ref('')
+const editSaving = ref(false)
+let detailTapCount = 0
+let detailTapLast = 0
+function onDetailImageTap() {
+  if (!detail.value || detail.value.type !== 'photo') return
+  const now = Date.now()
+  if (now - detailTapLast > 3000) detailTapCount = 0 // 超过 3 秒没点：清零重数
+  detailTapLast = now
+  detailTapCount++
+  if (detailTapCount === 3 || detailTapCount === 4) {
+    showToast(`再点 ${7 - detailTapCount} 次可编辑文字`)
+    return
+  }
+  if (detailTapCount >= 7) {
+    detailTapCount = 0
+    openDetailEdit()
+  }
+}
+function openDetailEdit() {
+  const rec = detail.value
+  if (!rec) return
+  // 老照片没存原图（v2.1.6 之前拍的）：没法重烧，明确提示
+  if (!rec.origPath) {
+    showToast('这张老照片没有留存原图，无法编辑文字（新拍的照片可以）')
+    return
+  }
+  editProject.value = rec.project || ''
+  editTimeLocal.value = (rec.time || '').replace(' ', 'T')
+  editAddress.value = rec.address || ''
+  editLonText.value = rec.lon != null ? toDMS(rec.lon, false) : '未定位'
+  editLatText.value = rec.lat != null ? toDMS(rec.lat, true) : '未定位'
+  editSheet.value = rec
+}
+function thumbFromDataUrl(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const k = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight))
+      const c = document.createElement('canvas')
+      c.width = Math.round(img.naturalWidth * k)
+      c.height = Math.round(img.naturalHeight * k)
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+      resolve(c.toDataURL('image/jpeg', 0.8))
+    }
+    img.onerror = () => resolve('')
+    img.src = dataUrl
+  })
+}
+async function saveDetailEdit() {
+  const rec = editSheet.value
+  if (!rec || editSaving.value) return
+  const time = normalizeTimeText(editTimeLocal.value)
+  if (!time) { showToast('时间格式不对，请选一个有效的时间'); return }
+  editSaving.value = true
+  try {
+    // 读无水印原图（App 内 _orig.jpg）
+    let origDataUrl = ''
+    try {
+      origDataUrl = await readAppFile(rec.origPath, 'image/jpeg')
+    } catch {
+      showToast('原图找不到了，无法编辑文字')
+      return
+    }
+    const meta = {
+      project: editProject.value.trim(),
+      time,
+      lon: rec.gcjLon != null ? rec.gcjLon : rec.lon,
+      lat: rec.gcjLat != null ? rec.gcjLat : rec.lat,
+      address: editAddress.value.trim(),
+      watermarkText: getWatermarkText()
+    }
+    // 原图已是裁剪好的画面，不再按比例裁剪，直接重烧
+    const { blob, dataUrl } = await burnPhotoWatermark(origDataUrl, meta)
+    // 覆盖 App 内原文件（同名同路径），再存一份到相册
+    const saved = await saveToAppStorage(blob, rec.path.split('/').pop())
+    const gal = await saveToGallery({ fileUri: saved.uri, isVideo: false })
+    const thumb = await thumbFromDataUrl(dataUrl)
+    const list = loadRecords()
+    const hit = list.find((x) => x.id === rec.id)
+    if (hit) {
+      hit.project = meta.project
+      hit.time = meta.time
+      hit.address = meta.address
+      hit.thumb = thumb
+      hit.gallery = gal.where
+      hit.galleryNote = gal.reason || gal.note || ''
+      saveRecords(list)
+    }
+    detail.value = hit || { ...rec, project: meta.project, time: meta.time, address: meta.address, thumb }
+    detailUrl.value = dataUrl
+    editSheet.value = null
+    refresh()
+    showToast('已更新，照片已重新烧水印')
+  } catch (e) {
+    showToast('保存失败：' + (e && e.message ? e.message : e))
+  } finally {
+    editSaving.value = false
+  }
+}
+watch(editSheet, (open) => {
+  if (open) pushBackOverlay('works-edit-text', () => { editSheet.value = null })
+  else removeBackOverlay('works-edit-text')
+})
 
 // ---- 长按多选 + 拖进文件夹 ----
 // 长按一张照片（500ms 不动）进入多选模式并选中它；多选模式下点按切换选择；
@@ -348,6 +481,7 @@ async function fileSrc(it) {
 }
 
 async function openDetail(it) {
+  detailTapCount = 0 // 换一张照片重数，避免上一张的点击数带过来
   detail.value = it
   detailFolder.value = getPhotoFolder(it.id)
   detailUrl.value = await fileSrc(it)

@@ -38,11 +38,11 @@ export function drawWatermark(ctx, w, h, meta) {
   ctx.save()
   ctx.translate(w / 2, h / 2)
   ctx.rotate((-30 * Math.PI) / 180)
-  const fontSize = Math.round(w * 0.22)
+  const fontSize = Math.round(w * 0.26)
   ctx.font = `900 ${fontSize}px "Arial Black", Arial, sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillStyle = 'rgba(255,255,255,0.35)'
+  ctx.fillStyle = 'rgba(255,255,255,0.26)'
   ctx.fillText(wmText, 0, 0)
   ctx.restore()
 
@@ -99,7 +99,8 @@ function loadImage(src) {
  * @param {string} src 图片 dataURL / blobURL / http(s) 地址
  * @param {object} meta 同 drawWatermark
  * @param {number} [ratio] 目标宽高比，不传则保持原图比例
- * @returns {Promise<{blob:Blob, dataUrl:string, width:number, height:number}>}
+ * @returns {Promise<{blob:Blob, dataUrl:string, rawDataUrl:string, width:number, height:number}>}
+ *   rawDataUrl 是烧水印之前的无水印原图（已按 ratio 裁剪、已缩放），供详情页编辑文字时重烧用
  */
 export async function burnPhotoWatermark(src, meta, ratio) {
   const img = await loadImage(src)
@@ -118,8 +119,10 @@ export async function burnPhotoWatermark(src, meta, ratio) {
   canvas.width = w; canvas.height = h
   const ctx = canvas.getContext('2d')
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h)
+  // 烧水印之前的画面就是无水印原图：先留一份 rawDataUrl，供详情页 7 次点击编辑文字时重烧
+  const rawDataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
   drawWatermark(ctx, w, h, meta)
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
   if (!blob) throw new Error('水印导出失败')
-  return { blob, dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY), width: w, height: h }
+  return { blob, dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY), rawDataUrl, width: w, height: h }
 }

@@ -8,7 +8,8 @@
     </select>
   </div>
 
-  <div class="stage" ref="stageEl">
+  <div class="stage" ref="stageEl"
+    @pointerdown="onStagePointerDown" @pointermove="onStagePointerMove" @pointerup="onStagePointerUp" @pointercancel="onStagePointerCancel">
     <div class="cam-wrap" :style="camWrapStyle">
     <video v-show="camOk" ref="videoEl" autoplay muted playsinline></video>
     <div v-if="camOk" class="wm-overlay">
@@ -23,6 +24,8 @@
     </div>
     <button v-if="camOk" class="flash-btn" @click="cycleFlashMode" title="闪光灯：点一下切换 自动/常开/关闭">闪光灯·{{ flashLabel }}</button>
     <div v-if="recording" class="rec-chip">● {{ recTimeText }}</div>
+    <div v-if="focusBox" class="focus-box" :style="{ left: focusBox.x + 'px', top: focusBox.y + 'px' }"></div>
+    <div v-if="expIndicator" class="exp-indicator">☀ {{ expText }}</div>
     <div v-if="!camOk" class="cam-off">
       <div v-if="camStarting" class="cam-starting"><span class="cam-spinner"></span>正在启动相机…</div>
       <div v-else>{{ camError || '相机未启动' }}</div>
@@ -31,9 +34,9 @@
       </div>
       <div style="font-size:13px;">浏览器/真机上也可直接用系统相机拍照，水印同样会烧进去：</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
-        <button @click="systemCamera('camera')" style="padding:10px 14px;border-radius:8px;border:1px solid #3a4a5c;background:#0f141b;color:#fff;">系统相机拍照</button>
+        <button @click="systemCamera('camera')" style="padding:10px 14px;border-radius:8px;border:1px solid #3a4a5c;background:#0f141b;color:#fff;">系统相机</button>
         <button @click="systemCamera('album')" style="padding:10px 14px;border-radius:8px;border:1px solid #3a4a5c;background:#0f141b;color:#fff;">从相册选图</button>
-        <button @click="systemVideo" style="padding:10px 14px;border-radius:8px;border:1px solid #3a4a5c;background:#0f141b;color:#fff;">系统相机录像</button>
+        <button @click="systemVideo" style="padding:10px 14px;border-radius:8px;border:1px solid #3a4a5c;background:#0f141b;color:#fff;">系统录像</button>
       </div>
       <input ref="videoFileInput" type="file" accept="video/*" capture="environment" style="display:none" @change="onVideoFilePicked" />
     </div>
@@ -50,13 +53,13 @@
         <button :class="{ active: mode === 'video' }" :disabled="recording" @click="switchMode('video')">🎥 录像</button>
       </div>
       <button class="circle-btn zoom-btn" @click="onZoomBtnClick"
-        @pointerdown="onZoomDragStart" @pointermove="onZoomDragMove" @pointerup="onZoomDragEnd" @pointercancel="onZoomDragEnd"
-        title="镜头 / 变焦：点一下打开面板，按住往上滑拉进、往下滑缩小">{{ zoomLabel }}</button>
+        @pointerdown="onZoomPressStart" @pointermove="onZoomPressMove" @pointerup="onZoomPressEnd" @pointercancel="onZoomPressEnd"
+        title="镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）">{{ zoomLabel }}</button>
     </div>
     <div v-if="zoomDragging" class="zoom-bubble">{{ zoomLabel }}</div>
     <div class="shutter-row">
       <div class="side-group left">
-        <button class="side-btn" @click="toggleFacing" :disabled="recording || !camOk">🔄 前后切换</button>
+        <button class="side-btn" @click="toggleFacing" :disabled="recording || !camOk">前后切换</button>
         <button class="side-btn" @click="systemCamera('album')" :disabled="!camOk">相册选图</button>
       </div>
       <button v-if="mode === 'photo'" class="shutter photo" :disabled="!camOk" @click="takePhoto">拍照</button>
@@ -64,9 +67,9 @@
         {{ recording ? '停止' : '录像' }}
       </button>
       <div class="side-group right">
-        <button class="side-btn" @click="refreshLocation" :disabled="locBusy">📍 重新定位</button>
-        <button v-if="camOk" class="side-btn" @click="systemCamera('camera')">系统相机拍照</button>
-        <button v-if="!camOk" class="side-btn" @click="systemVideo">系统相机录像</button>
+        <button class="side-btn" @click="refreshLocation" :disabled="locBusy">重新定位</button>
+        <button v-if="camOk" class="side-btn" @click="systemCamera('camera')">系统相机</button>
+        <button v-if="!camOk" class="side-btn" @click="systemVideo">系统录像</button>
       </div>
     </div>
   </div>
@@ -96,7 +99,7 @@
         <button v-for="c in cameras" :key="c.deviceId" :class="{ active: cameraId === c.deviceId }" @click="switchCameraById(c.deviceId)">{{ c.label }}</button>
       </div>
       <div class="field-desc" v-else>正在枚举摄像头…</div>
-      <div class="field-desc">iPhone 网页版只给前/后两个摄像头，长焦/超广角苹果不开放给网页，想用长焦请用“系统相机拍照”。</div>
+      <div class="field-desc">iPhone 网页版只给前/后两个摄像头，长焦/超广角苹果不开放给网页，想用长焦请用“系统相机”。</div>
     </div>
   </div>
 
@@ -173,6 +176,8 @@ const cameraId = ref(localStorage.getItem('fw_camera_device') || '')
 // 变焦：从当前视频轨的能力里读（0.5×–10× 按手机实际支持的过滤）
 const zoom = ref(1)
 const zoomCaps = ref(null)
+// 曝光补偿能力（exposureCompensation 的 min/max/step），不支持的设备是 null
+const expCaps = ref(null)
 // 取景舞台：按比例适配（苹果相机式），9:16 铺满上下，3:4 / 1:1 只占对应区域
 const stageEl = ref(null)
 const stageBox = ref({ w: 0, h: 0 })
@@ -282,7 +287,9 @@ function onProjectInput() {
 // 注意：getUserMedia 约束里只放宽高（ideal）和前后方向/deviceId，
 // zoom、对焦等能力一律在流起来之后用 track.applyConstraints 应用。
 function buildCameraLevels() {
-  const audio = mode.value === 'video'
+  // 录像不再重启相机流取音频（真机 2.1.5：切录像重开流常失败）：流永远只开视频，
+  // 录像的音频另外单独取一路 getUserMedia({ audio: true }) 混进去。
+  const audio = false
   const res = { width: { ideal: 1920 }, height: { ideal: 1080 } }
   const levels = []
   if (cameraId.value) {
@@ -320,6 +327,9 @@ function cameraErrorText(e) {
 }
 async function startCamera() {
   stopStream()
+  // 刚停掉的流要给系统一点时间释放摄像头，立刻重开在安卓上常报
+  // NotReadableError（摄像头正被占用），切镜头/重开失败多半是这个原因
+  await new Promise((r) => setTimeout(r, 250))
   camError.value = ''
   camStarting.value = true
   const levels = buildCameraLevels()
@@ -336,6 +346,8 @@ async function startCamera() {
       try { await withTimeout(videoEl.value.play(), 5000, '播放取景') } catch { /* 播不起来也不阻塞，画面稍后自己起 */ }
       listCameras()
       readTrackCaps()
+      // 换镜头后之前调过的曝光尽量保留（支持的镜头就恢复）
+      if (exposure.value !== 0) applyExposure(exposure.value)
       // 换镜头后变焦会回到 1×，之前选过的倍数尽量恢复；新镜头不支持就回到 1×
       if (zoom.value !== 1 && zoomCaps.value) {
         const track = s.getVideoTracks()[0]
@@ -400,76 +412,109 @@ function fitStage() {
 function formatZoom(z) {
   return (Number.isInteger(z) ? String(z) : z.toFixed(1)) + '×'
 }
-// 从当前视频轨读能力：变焦范围 + 是否支持闪光灯；换镜头后重新读。
+// 从当前视频轨读能力：变焦范围 + 曝光补偿 + 是否支持闪光灯；换镜头后重新读。
 function readTrackCaps() {
   const track = stream.value && stream.value.getVideoTracks()[0]
-  if (!track || !track.getCapabilities) { zoomCaps.value = null; return }
+  if (!track || !track.getCapabilities) { zoomCaps.value = null; expCaps.value = null; return }
+  // 换了镜头/流：变焦失败标记清掉，新镜头重新试；曝光不支持的提示也清掉重算
+  zoomBroken = false
+  expToastShown = false
   try {
     const caps = track.getCapabilities()
-    zoomCaps.value = caps.zoom ? { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 } : null
-    if (zoomCaps.value) {
-      if (zoom.value < zoomCaps.value.min) zoom.value = zoomCaps.value.min
-      if (zoom.value > zoomCaps.value.max) zoom.value = zoomCaps.value.max
-    }
+    // 真机 2.1.5：1× 按钮滑动和双指捏合都没反应——根因是这台手机的摄像头
+    // 不在 getCapabilities 里报 zoom，zoomCaps 是 null，变焦入口直接就退出了。
+    // 报不出来不等于不支持：先给一个默认范围（1×–10×），真调时 applyConstraints 试一次，
+    // 失败再回滚并提示“不支持变焦”，不要一开始就把路堵死。
+    zoomCaps.value = caps.zoom
+      ? { min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 }
+      : { min: 1, max: 10, step: 0.1 }
+    if (zoom.value < zoomCaps.value.min) zoom.value = zoomCaps.value.min
+    if (zoom.value > zoomCaps.value.max) zoom.value = zoomCaps.value.max
+    expCaps.value = caps.exposureCompensation
+      ? { min: caps.exposureCompensation.min, max: caps.exposureCompensation.max, step: caps.exposureCompensation.step || 0.1 }
+      : null
     track._torchSupported = !!caps.torch
-  } catch { zoomCaps.value = null }
+  } catch { zoomCaps.value = null; expCaps.value = null }
 }
 async function applyZoom(z) {
   const prev = zoom.value
   zoom.value = z
-  const track = stream.value && stream.value.getVideoTracks()[0]
-  if (!track) { zoom.value = prev; return }
-  try {
-    await track.applyConstraints({ advanced: [{ zoom: z }] })
-  } catch (e) {
+  const ok = await tryApplyZoom(z)
+  if (!ok) {
     // 变焦失败不把流搞崩：倍数回到之前的值，界面不显示一个实际没生效的倍数
     zoom.value = prev
-    showToast('变焦失败：' + (e && e.message ? e.message : e))
     readTrackCaps()
   }
 }
-
-// ---- 变焦按钮按住上下滑：按住 1× 圆钮往上滑拉进（放大）、往下滑缩小；
-// 位移很小（< 8px）当点按，打开镜头/变焦面板。pointer capture 让手指滑出按钮外也能继续；
-// 和双指捏合缩放不冲突（捏合在取景器 stage 上，这个按钮在控制区）。
-const zoomDragging = ref(false)
-let zoomDragState = null // { startY, startZoom, moved }
-let zoomDragApplied = 1
-let zoomSuppressClick = false
-function onZoomDragStart(e) {
-  const caps = zoomCaps.value
-  if (!caps) { zoomDragState = null; return } // 当前镜头不支持变焦：纯点按
-  zoomDragState = { startY: e.clientY, startZoom: zoom.value, moved: false }
-  zoomDragApplied = zoom.value
-}
-function onZoomDragMove(e) {
-  if (!zoomDragState) return
-  const dy = zoomDragState.startY - e.clientY // 上滑为正（放大）
-  if (!zoomDragState.moved && Math.abs(dy) < 8) return
-  if (!zoomDragState.moved) {
-    zoomDragState.moved = true
-    zoomDragging.value = true
-    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+// 拖动/捏合里调变焦共用：先试 applyConstraints，成功才算数；失败回滚到上次成功的倍数，
+// 并记下来（同一路流不再反复试），提示一次“不支持变焦”。
+let zoomBroken = false
+let zoomLastGood = 1
+async function tryApplyZoom(z) {
+  if (zoomBroken) return false
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (!track) return false
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: z }] })
+    zoomLastGood = z
+    return true
+  } catch {
+    zoomBroken = true
+    zoom.value = zoomLastGood
+    showToast('当前摄像头不支持变焦')
+    return false
   }
+}
+
+// ---- 变焦按钮长按上下滑（v2.1.6，用户反馈 v2.1.5 的按住就滑没反应）：----
+// 按住 1× 圆钮约 350ms 后进入滑动变焦（震动一下 + 气泡提示），再上下滑调变焦
+// （上滑拉进、下滑缩小）；没到长按时间就松手当点按，打开镜头/变焦面板。
+// v2.1.5 没反应的根因：zoomCaps 是 null 时 pointerdown 里直接 return，拖动根本没开始——
+// 这台手机不报 zoom 能力（见 readTrackCaps 的默认范围 + 试一次），长按时先重读一次能力。
+const zoomDragging = ref(false)
+let zoomLongTimer = null
+let zoomPressState = null // { startY, startZoom, active, lastApplied }
+let zoomSuppressClick = false
+function onZoomPressStart(e) {
+  // 长按时先重读一次能力（刚换镜头、或之前没读到时这里能补上）
+  readTrackCaps()
+  const caps = zoomCaps.value
+  if (!caps) { zoomPressState = null; return } // 实在没有变焦能力：纯点按
+  zoomPressState = { startY: e.clientY, startZoom: zoom.value, active: false, lastApplied: zoom.value }
+  try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+  clearTimeout(zoomLongTimer)
+  zoomLongTimer = setTimeout(() => {
+    zoomLongTimer = null
+    if (!zoomPressState) return
+    zoomPressState.active = true
+    zoomDragging.value = true
+    try { if (navigator.vibrate) navigator.vibrate(20) } catch { /* ignore */ }
+  }, 350)
+}
+function onZoomPressMove(e) {
+  if (!zoomPressState || !zoomPressState.active) return
+  if (zoomBroken) return
+  const dy = zoomPressState.startY - e.clientY // 上滑为正（放大）
   const caps = zoomCaps.value
   if (!caps) return
   // 上滑 120px 变焦翻一倍（指数映射：低倍微调、高倍大步），夹到设备变焦范围
-  let z = zoomDragState.startZoom * Math.pow(2, dy / 120)
+  let z = zoomPressState.startZoom * Math.pow(2, dy / 120)
   z = Math.min(caps.max, Math.max(caps.min, z))
   z = Math.round(z * 10) / 10
-  if (Math.abs(z - zoomDragApplied) < 0.05 && z !== caps.min && z !== caps.max) return
-  zoomDragApplied = z
+  if (Math.abs(z - zoomPressState.lastApplied) < 0.05 && z !== caps.min && z !== caps.max) return
+  zoomPressState.lastApplied = z
   zoom.value = z // 右上角 1× 标签同步更新（zoomLabel 是 zoom 的 computed），拖动气泡也同步
-  const track = stream.value && stream.value.getVideoTracks()[0]
-  if (track) track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {})
+  tryApplyZoom(z)
 }
-function onZoomDragEnd() {
-  if (!zoomDragState) return
-  const wasDrag = zoomDragState.moved
-  zoomDragState = null
+function onZoomPressEnd() {
+  clearTimeout(zoomLongTimer)
+  zoomLongTimer = null
+  if (!zoomPressState) return
+  const wasDrag = zoomPressState.active
+  zoomPressState = null
   zoomDragging.value = false
   if (wasDrag) {
-    // 拖过：接下来的 click 是拖动的收尾，不打开面板；click 晚于 pointerup 触发，
+    // 拖过：接下来的 click 是长按滑动的收尾，不打开面板；click 晚于 pointerup 触发，
     // 所以先立 flag、由 click 处理里消费，1 秒后兜底清掉（防止 click 没触发时 flag 残留）
     zoomSuppressClick = true
     setTimeout(() => { zoomSuppressClick = false }, 1000)
@@ -480,57 +525,162 @@ function onZoomBtnClick() {
   showLensPanel.value = true
 }
 
-// ---- 双指捏合变焦：在取景器上两指张开/合拢，距离变化映射到变焦倍数 ----
-// 只处理双指；单指点按（点信息条改项目名、点按钮）完全不受影响；
-// 捏合时 preventDefault 阻止页面滚动/缩放（stage 上还加了 touch-action: none）。
-let pinchState = null
-function pinchDist(t1, t2) {
-  return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+// ---- 取景器手势（v2.1.6，统一用 pointer 事件，按手指数量区分）：----
+// 单指点按 = 对焦（对焦框 + 硬件对焦点）；单指竖向滑动 = 调曝光（上滑变亮、下滑变暗）；
+// 双指 = 捏合缩放。两指按下后就不再走曝光逻辑；和 1× 按钮的长按滑动不冲突
+// （按钮在控制区，手势在取景器 stage 上）。
+// v2.1.3 的 touch 版捏合在真机上没反应：除了 zoomCaps 拿不到（见 readTrackCaps 的默认范围），
+// touch 和 pointer 两套处理混用也容易互相抢；现在 stage 上只留这一套 pointer 处理。
+const focusBox = ref(null) // { x, y }：对焦框在取景框内的位置（px），短暂显示后自动消失
+const expIndicator = ref(false) // 曝光指示（☀ + 数值）是否显示
+const exposure = ref(0) // 当前曝光补偿值（EV），对焦/换位置不重置
+const expText = computed(() => {
+  const v = exposure.value
+  return (v > 0 ? '+' : '') + (Number.isInteger(v) ? String(v) : v.toFixed(1))
+})
+let focusHideTimer = null
+let expHideTimer = null
+let stagePointers = new Map() // pointerId → { x, y }：当前按在取景器上的手指
+let stageGesture = null // { kind:'tap', startX, startY } | { kind:'exposure', startY, startExp } | { kind:'pinch', startDist, startZoom, lastApplied }
+let expToastShown = false // 不支持曝光补偿时只提示一次，避免滑动中反复弹
+
+// 点按位置换算到取景框内的坐标（nx/ny 是归一化 0–1，给硬件对焦点用）；
+// 点在取景框外的黑边上返回 null，不管。
+function stagePoint(clientX, clientY) {
+  const wrap = stageEl.value && stageEl.value.querySelector('.cam-wrap')
+  if (!wrap) return null
+  const r = wrap.getBoundingClientRect()
+  const x = clientX - r.left
+  const y = clientY - r.top
+  if (x < 0 || y < 0 || x > r.width || y > r.height) return null
+  return { x, y, nx: x / r.width, ny: y / r.height }
 }
-function onPinchStart(e) {
-  if (e.touches.length !== 2) return
+function showFocusBox(p) {
+  focusBox.value = { x: p.x, y: p.y }
+  clearTimeout(focusHideTimer)
+  focusHideTimer = setTimeout(() => { focusBox.value = null }, 2000)
+}
+function showExpIndicator() {
+  expIndicator.value = true
+  clearTimeout(expHideTimer)
+  expHideTimer = setTimeout(() => { expIndicator.value = false }, 1500)
+}
+async function applyExposure(v) {
   const track = stream.value && stream.value.getVideoTracks()[0]
-  if (!track || !zoomCaps.value) { pinchState = null; return }
-  pinchState = {
-    startDist: pinchDist(e.touches[0], e.touches[1]),
-    startZoom: zoom.value,
-    lastApplied: zoom.value
+  if (!track) return false
+  try {
+    await track.applyConstraints({ advanced: [{ exposureCompensation: v }] })
+    exposure.value = v
+    return true
+  } catch { return false }
+}
+async function focusAt(p) {
+  showFocusBox(p)
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (!track || !track.getCapabilities) return // 不支持硬件对焦：只显示对焦框做视觉反馈
+  let caps = null
+  try { caps = track.getCapabilities() } catch { /* ignore */ }
+  if (!caps || !caps.pointsOfInterest) return
+  const focusMode = caps.focusMode && caps.focusMode.includes('single-shot')
+    ? 'single-shot'
+    : (caps.focusMode && caps.focusMode.includes('continuous') ? 'continuous' : null)
+  if (!focusMode) return
+  try {
+    await track.applyConstraints({ advanced: [{ pointsOfInterest: [{ x: p.nx, y: p.ny }], focusMode }] })
+  } catch { /* 硬件对焦失败也不影响拍摄，只留对焦框 */ }
+}
+function onStagePointerDown(e) {
+  // 信息条（点它改项目名）、闪光灯按钮、相机未启动面板上的按钮：各有自己的点击，不触发对焦/曝光
+  if (e.target && e.target.closest && e.target.closest('.bar, .flash-btn, .cam-off')) return
+  if (!camOk.value) return
+  stagePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+  if (stagePointers.size === 2) {
+    // 第二指按下：转捏合缩放；之前那根手指的点按/曝光状态作废
+    const pts = [...stagePointers.values()]
+    stageGesture = { kind: 'pinch', startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), startZoom: zoom.value, lastApplied: zoom.value }
+    return
+  }
+  if (stagePointers.size === 1) {
+    stageGesture = { kind: 'tap', startX: e.clientX, startY: e.clientY }
   }
 }
-function onPinchMove(e) {
-  if (!pinchState || e.touches.length !== 2) return
-  e.preventDefault()
-  const d = pinchDist(e.touches[0], e.touches[1])
-  if (!pinchState.startDist) return
-  const caps = zoomCaps.value
-  if (!caps) return
-  let z = pinchState.startZoom * (d / pinchState.startDist)
-  z = Math.min(caps.max, Math.max(caps.min, z))
-  z = Math.round(z * 10) / 10
-  if (Math.abs(z - pinchState.lastApplied) < 0.05) return
-  pinchState.lastApplied = z
-  zoom.value = z // 右上角 1× 显示同步更新（zoomLabel 是 zoom 的 computed）
-  const track = stream.value && stream.value.getVideoTracks()[0]
-  if (track) track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {})
+function onStagePointerMove(e) {
+  const pt = stagePointers.get(e.pointerId)
+  if (!pt) return
+  pt.x = e.clientX
+  pt.y = e.clientY
+  if (stagePointers.size === 2 && stageGesture && stageGesture.kind === 'pinch') {
+    const pts = [...stagePointers.values()]
+    const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+    if (!stageGesture.startDist) return
+    if (zoomBroken) return
+    const caps = zoomCaps.value
+    if (!caps) return
+    let z = stageGesture.startZoom * (d / stageGesture.startDist)
+    z = Math.min(caps.max, Math.max(caps.min, z))
+    z = Math.round(z * 10) / 10
+    if (Math.abs(z - stageGesture.lastApplied) < 0.05) return
+    stageGesture.lastApplied = z
+    zoom.value = z
+    tryApplyZoom(z)
+    return
+  }
+  if (stagePointers.size === 1 && stageGesture) {
+    const dx = e.clientX - stageGesture.startX
+    const dy = e.clientY - stageGesture.startY
+    if (stageGesture.kind === 'tap') {
+      // 还没定性：竖向滑动超 12px 且以竖向为主 → 转调曝光；横向为主 → 取消点按（横滑不管）
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+        if (!expCaps.value) {
+          if (!expToastShown) { expToastShown = true; showToast('当前摄像头不支持曝光调节') }
+          stageGesture = null
+          return
+        }
+        stageGesture = { kind: 'exposure', startY: e.clientY, startExp: exposure.value }
+        showExpIndicator()
+      } else if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+        stageGesture = null // 横滑/斜滑：不做对焦也不调曝光
+      }
+      return
+    }
+    if (stageGesture.kind === 'exposure') {
+      const caps = expCaps.value
+      if (!caps) return
+      // 上滑 120px 加 1 EV，夹到设备曝光补偿范围，按 step 取整
+      let v = stageGesture.startExp + (stageGesture.startY - e.clientY) / 120
+      v = Math.min(caps.max, Math.max(caps.min, v))
+      const step = caps.step || 0.1
+      v = Math.round(v / step) * step
+      v = Math.round(v * 100) / 100
+      if (v === exposure.value) return
+      exposure.value = v // 指示实时更新；硬件应用失败时不回写
+      applyExposure(v)
+      showExpIndicator()
+    }
+  }
 }
-function onPinchEnd(e) {
-  if (e.touches.length < 2) pinchState = null
+function onStagePointerUp(e) {
+  const wasTap = stageGesture && stageGesture.kind === 'tap'
+  const tapX = wasTap ? stageGesture.startX : null
+  const tapY = wasTap ? stageGesture.startY : null
+  stagePointers.delete(e.pointerId)
+  if (stageGesture && stageGesture.kind === 'pinch' && stagePointers.size === 1) {
+    // 捏合剩一指：剩下的手指重新起一个点按状态，避免用旧的起点误触发曝光
+    const rest = [...stagePointers.values()][0]
+    stageGesture = { kind: 'tap', startX: rest.x, startY: rest.y }
+    return
+  }
+  stageGesture = null
+  // 单指点按（没滑动）：对着点按的位置对焦
+  if (wasTap && tapX != null && tapY != null) {
+    const p = stagePoint(tapX, tapY)
+    if (p) focusAt(p)
+  }
 }
-function attachPinch() {
-  const stage = stageEl.value
-  if (!stage) return
-  stage.addEventListener('touchstart', onPinchStart, { passive: true })
-  stage.addEventListener('touchmove', onPinchMove, { passive: false })
-  stage.addEventListener('touchend', onPinchEnd, { passive: true })
-  stage.addEventListener('touchcancel', onPinchEnd, { passive: true })
-}
-function detachPinch() {
-  const stage = stageEl.value
-  if (!stage) return
-  stage.removeEventListener('touchstart', onPinchStart)
-  stage.removeEventListener('touchmove', onPinchMove)
-  stage.removeEventListener('touchend', onPinchEnd)
-  stage.removeEventListener('touchcancel', onPinchEnd)
+function onStagePointerCancel(e) {
+  stagePointers.delete(e.pointerId)
+  if (stagePointers.size < 2) stageGesture = null
 }
 // 改项目名称：弹层常驻 DOM，靠位移隐藏；点水印信息条时在点击手势内同步聚焦，手机输入法直接弹出来。
 function openProjectEdit() {
@@ -554,6 +704,9 @@ function saveProjectEdit() {
 let flashCanvas = null
 // 录像时自动闪光灯是否亮着（停录时要关掉）
 let recFlashLit = false
+// 自动闪光的亮度阈值：取景画面是自动曝光提亮过的，暗场景的采样亮度也常在 50–70，
+// 旧阈值 45 几乎永远判“不暗”，灯就一直不亮；提到 80 才能在暗光下真正触发。
+const FLASH_LUMA_THRESHOLD = 80
 function sampleBrightness() {
   try {
     const v = videoEl.value
@@ -574,12 +727,26 @@ async function setTorch(on) {
   try {
     await track.applyConstraints({ advanced: [{ torch: !!on }] })
     flashOn.value = !!on
+    if (on) track._torchWorks = true
     return true
-  } catch { return false }
+  } catch {
+    // 只在“开灯”失败时记下来（关灯失败不说明没灯）；记下来后不再反复试
+    if (on) track._torchWorks = false
+    return false
+  }
 }
+// 闪光灯支不支持：不只信 getCapabilities().torch（很多手机不报 torch，但灯其实能开），
+// 没试过的先允许试一次，开灯失败才记为不支持。
 function torchSupported() {
   const track = stream.value && stream.value.getVideoTracks()[0]
-  return !!(track && track._torchSupported)
+  if (!track) return false
+  if (track._torchWorks === false) return false
+  return true
+}
+// 采一帧新鲜画面再测亮度：等一帧取景刷新，避免读到旧帧
+async function sampleFreshBrightness() {
+  await new Promise((r) => requestAnimationFrame(r))
+  return sampleBrightness()
 }
 // 按当前模式设置预览时的灯状态：常开→亮，其他→灭（自动模式预览不亮灯）
 async function applyFlashPreviewState() {
@@ -594,23 +761,31 @@ async function cycleFlashMode() {
   flashMode.value = flashMode.value === 'auto' ? 'on' : flashMode.value === 'on' ? 'off' : 'auto'
   try { localStorage.setItem('fw_flash_mode', flashMode.value) } catch {}
   if (flashMode.value === 'on') {
-    if (!torchSupported()) { showToast('当前摄像头不支持闪光灯'); return }
-    await setTorch(true)
+    const ok = await setTorch(true)
+    if (!ok) { showToast('当前摄像头不支持闪光灯'); return }
   } else {
     await setTorch(false)
   }
   showToast('闪光灯：' + flashLabel.value)
 }
-// 拍照那一刻才用的自动闪光：暗了开灯、等灯亮（250ms）、拍完调用方马上关灯。
+// 拍照那一刻才用的自动闪光：暗了开灯、等灯亮（画面真的变亮）、拍完调用方马上关灯。
 // 返回灯是否亮过（供 takePhoto 在 finally 里关灯）；不暗/不支持返回 false。
 async function flashForCapture() {
   if (flashMode.value !== 'auto') return false
   if (!torchSupported()) return false
-  const luma = sampleBrightness()
-  if (luma == null || luma >= 45) return false
+  const luma = await sampleFreshBrightness()
+  if (luma == null || luma >= FLASH_LUMA_THRESHOLD) return false
   const ok = await setTorch(true)
-  if (ok) await new Promise((r) => setTimeout(r, 250))
-  return ok
+  if (!ok) return false
+  // 灯开了不等于灯亮了：等取景画面真的变亮（最多 800ms）再拍，
+  // 否则 250ms 一到就拍，拍到的还是没补光的暗帧
+  const t0 = Date.now()
+  while (Date.now() - t0 < 800) {
+    await new Promise((r) => setTimeout(r, 100))
+    const now = sampleBrightness()
+    if (now != null && now >= luma + 15) break
+  }
+  return true
 }
 async function switchCameraById(id) {
   if (id) cameraId.value = id
@@ -629,8 +804,9 @@ function stopStream() {
 }
 async function switchMode(m) {
   if (recording.value) return
+  // 切拍照/录像不重启相机（真机 2.1.5：停流立刻重开常报摄像头被占用，录像点完拿不到摄像头）
+  // 取景比例是 computed，随 mode 自己变；录像音频另外单独取一路，不动视频流。
   mode.value = m
-  await startCamera()
 }
 async function toggleFacing() {
   if (cameras.value.length > 1) {
@@ -900,8 +1076,17 @@ function makeThumb(dataUrl, mime = 'image/jpeg') {
   })
 }
 
-async function persistRecord({ type, blob, fileName, meta, thumb, mime }) {
+async function persistRecord({ type, blob, fileName, meta, thumb, mime, origBlob, origFileName }) {
   const saved = await saveToAppStorage(blob, fileName)
+  // 无水印原图（仅照片）：另存一份 _orig.jpg 在 App 内，不进相册；
+  // 详情页连点 7 次编辑文字时，用它重新烧水印替换（老照片没存原图的无法编辑）。
+  let origPath = ''
+  if (origBlob && origFileName) {
+    try {
+      const origSaved = await saveToAppStorage(origBlob, origFileName)
+      origPath = origSaved.path
+    } catch { /* 原图存失败不阻塞主照片 */ }
+  }
   const gal = await saveToGallery({ fileUri: saved.uri, isVideo: type === 'video' })
   const rec = {
     id: uid(), type, project: meta.project, time: meta.time,
@@ -909,6 +1094,7 @@ async function persistRecord({ type, blob, fileName, meta, thumb, mime }) {
     // meta.lon/meta.lat 在拍摄时已是 GCJ-02，记录直接存 GCJ-02。
     lon: meta.lon, lat: meta.lat, gcjLon: meta.lon, gcjLat: meta.lat, address: meta.address,
     path: saved.path, uri: saved.uri, thumb: thumb || '',
+    origPath,
     gallery: gal.where, galleryNote: gal.reason || gal.note || '', mime: mime || blob.type
   }
   const list = loadRecords()
@@ -935,6 +1121,8 @@ async function takePhoto() {
     const rawCanvas = document.createElement('canvas')
     rawCanvas.width = w; rawCanvas.height = h
     rawCanvas.getContext('2d').drawImage(videoEl.value, sx, sy, sw, sh, 0, 0, w, h)
+    // 先留一份无水印原图（烧水印之前导出），再烧水印
+    const origBlob = await new Promise((r) => rawCanvas.toBlob(r, 'image/jpeg', JPEG_QUALITY))
     // 烧水印
     const wmCtx = rawCanvas.getContext('2d')
     drawWatermark(wmCtx, w, h, meta)
@@ -943,7 +1131,7 @@ async function takePhoto() {
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
     const thumb = await makeThumb(dataUrl)
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb })
+    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg` })
     // 拍照后不弹分享、不跳预览页，留在拍摄界面直接继续拍
     await afterPhotoSaved({ rec })
   } catch (e) {
@@ -977,11 +1165,13 @@ async function systemCamera(source) {
     const meta = currentMeta()
     // 系统相机/相册的图也在烧水印前按所选竖版比例中心裁剪
     const targetRatio = (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
-    const { blob, dataUrl } = await burnPhotoWatermark(photo.dataUrl, meta, targetRatio)
+    const { blob, dataUrl, rawDataUrl } = await burnPhotoWatermark(photo.dataUrl, meta, targetRatio)
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
     const thumb = await makeThumb(dataUrl)
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb })
+    // 无水印原图：burnPhotoWatermark 烧水印前留的 rawDataUrl（已按比例裁剪、已缩放）
+    const origBlob = rawDataUrl ? await (await fetch(rawDataUrl)).blob() : null
+    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg` })
     // 系统相机拍照同样不跳预览页，留在拍摄界面；照片同时进相册
     await afterPhotoSaved({ rec })
   } catch (e) {
@@ -994,29 +1184,41 @@ async function systemCamera(source) {
 }
 
 // ---- 视频：canvas.captureStream + MediaRecorder，每帧烧水印 ----
-async function ensureVideoStream() {
-  if (stream.value && stream.value.getAudioTracks().length > 0) return
-  await startCamera() // video 模式下 getUserMedia 带 audio:true
+let recAudioStream = null // 录像单独取的音频流（视频流常驻不动，只开视频不开音频）
+// 录像的音频不从常驻视频流里拿（它只开了视频）：单独取一路纯音频流，
+// 避免为了加音频轨重启整个相机（真机 2.1.5 录像点完拿不到摄像头的根因）。
+// 没麦克风权限就返回 null，静音录制，不阻塞录像。
+async function getRecAudioTrack() {
+  try {
+    recAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    return recAudioStream.getAudioTracks()[0] || null
+  } catch { return null }
+}
+function stopRecAudioStream() {
+  if (recAudioStream) {
+    recAudioStream.getTracks().forEach((t) => t.stop())
+    recAudioStream = null
+  }
 }
 async function startRecording() {
   try {
-    await ensureVideoStream()
+    // 常驻流还活着就直接用；死了（比如切后台被系统断掉）才重开
+    await resumeCameraIfNeeded()
+    if (!stream.value) { showToast('相机未启动，无法录像'); return }
     await waitForLocation()
     recMeta = currentMeta()
     // 自动模式：录像需要持续补光，开录时按亮度决定，停录时关灯
     if (flashMode.value === 'auto' && torchSupported()) {
-      const luma = sampleBrightness()
-      if (luma != null && luma < 45) recFlashLit = await setTorch(true)
+      const luma = await sampleFreshBrightness()
+      if (luma != null && luma < FLASH_LUMA_THRESHOLD) recFlashLit = await setTorch(true)
     }
     recCanvas = document.createElement('canvas')
     recCanvas.width = 1080; recCanvas.height = 1920
     recCtx = recCanvas.getContext('2d')
     const canvasStream = recCanvas.captureStream(30)
     const tracks = [...canvasStream.getVideoTracks()]
-    if (stream.value) {
-      const audio = stream.value.getAudioTracks()
-      if (audio.length) tracks.push(audio[0])
-    }
+    const audioTrack = await getRecAudioTrack()
+    if (audioTrack) tracks.push(audioTrack)
     const combined = new MediaStream(tracks)
     const mimeCandidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
     const mime = mimeCandidates.find((m) => { try { return MediaRecorder.isTypeSupported(m) } catch { return false } }) || ''
@@ -1039,6 +1241,7 @@ async function startRecording() {
     showToast('开始录像（竖屏 1080×1920，水印实时烧录中）')
   } catch (e) {
     recording.value = false
+    stopRecAudioStream()
     showToast('录像启动失败：' + (e && e.message ? e.message : e))
   }
 }
@@ -1052,8 +1255,8 @@ function stopRecording() {
   if (recFlashLit) { setTorch(false).catch(() => {}); recFlashLit = false }
 }
 async function onRecordStop() {
-  if (recFlashLit) { recFlashLit = false; try { await setTorch(false) } catch { /* ignore */ } }
   try {
+    if (recFlashLit) { recFlashLit = false; try { await setTorch(false) } catch { /* ignore */ } }
     const mime = (mediaRecorder && mediaRecorder.mimeType) || 'video/webm'
     const blob = new Blob(recChunks, { type: mime })
     if (!blob.size) { showToast('录像为空，未保存'); return }
@@ -1065,6 +1268,8 @@ async function onRecordStop() {
     preview.value = { kind: 'video', url, meta: recMeta, gallery: rec.gallery, galleryNote: rec.galleryNote, recordId: rec.id }
   } catch (e) {
     showToast('录像保存失败：' + (e && e.message ? e.message : e))
+  } finally {
+    stopRecAudioStream() // 录像用的单独音频流，录完就停，别一直占着麦克风
   }
 }
 
@@ -1156,6 +1361,7 @@ async function deletePreview() {
   const hit = list.find((x) => x.id === preview.value.recordId)
   if (hit) {
     await deleteAppFile(hit.path)
+    if (hit.origPath) await deleteAppFile(hit.origPath)
     saveRecords(list.filter((x) => x.id !== hit.id))
     emit('saved', null)
   }
@@ -1164,7 +1370,8 @@ async function deletePreview() {
 }
 function retake() {
   preview.value = null
-  startCamera()
+  // 常驻模式：预览时流没停，重拍不用重启相机；流万一死了才重开
+  resumeCameraIfNeeded()
 }
 
 let stageObserver = null
@@ -1178,7 +1385,6 @@ onMounted(() => {
     stageObserver.observe(stageEl.value)
   }
   fitStage()
-  attachPinch()
   startCamera() // 常驻模式：App 一打开就启动相机，切 tab 不停，只在退出 App 时停
   showCachedFixImmediately() // 打开先显示上次缓存的坐标，再取新的
   refreshLocation()
@@ -1191,7 +1397,6 @@ onBeforeUnmount(() => {
   clearInterval(recTimer)
   cancelAnimationFrame(recRaf)
   stopAddrRetry()
-  detachPinch()
   if (stageObserver) { stageObserver.disconnect(); stageObserver = null }
   window.removeEventListener('fw-settings-changed', refreshWmText)
   window.removeEventListener('online', onOnline)

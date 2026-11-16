@@ -8,7 +8,7 @@
  * 注意：Node 里没有真实 Canvas，本脚本验证的是绘制指令；真实像素渲染需在浏览器/WebView 里看，
  * 另见 README 的真机验证清单。带 --render 时若装了 node-canvas 会额外出一张真实水印样图。
  */
-import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition, reverseGeocode } from '../src/utils/geo.js'
+import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, normalizeTimeText, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition, reverseGeocode } from '../src/utils/geo.js'
 import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
 import { pushBackOverlay, removeBackOverlay, popBackOverlay, backOverlayCount, clearBackOverlays } from '../src/utils/backstack.js'
 import { backfillRecordsAddress, setPhotoFolder, getPhotoFolderMap, getPhotoFolder } from '../src/utils/store.js'
@@ -256,6 +256,23 @@ console.log('10) 多选批量移进文件夹 setPhotoFolder')
     if (origLocalStorage === undefined) delete globalThis.localStorage
     else globalThis.localStorage = origLocalStorage
   }
+}
+
+// ---------- 11. v2.1.6：水印 0.26 大小 / 0.26 透明度 + 编辑时间归一化 ----------
+// 用户明确要求：GSZD 水印大一点、更透一点，和演示版一致（之前源码一直是 0.22/0.35）。
+console.log('11) v2.1.6 水印 0.26/0.26 + normalizeTimeText')
+{
+  const ctx5 = mockCtx()
+  drawWatermark(ctx5, 1920, 1080, meta)
+  const fonts5 = ctx5.calls.filter((c) => c[0] === 'font').map((c) => c[1])
+  const styles5 = ctx5.calls.filter((c) => c[0] === 'fillStyle').map((c) => c[1])
+  check('斜水印字号是画布宽的 0.26（1920 → 499px）', fonts5.some((f) => f.includes('499px')), fonts5[0])
+  check('斜水印透明度是 0.26（更透）', styles5.includes('rgba(255,255,255,0.26)'), styles5[0])
+  check('normalizeTimeText：datetime-local 带 T 转空格', normalizeTimeText('2026-11-16T10:20:30') === '2026-11-16 10:20:30')
+  check('normalizeTimeText：已有空格格式原样通过', normalizeTimeText('2026-11-16 10:20:30') === '2026-11-16 10:20:30')
+  check('normalizeTimeText：缺秒补 00', normalizeTimeText('2026-11-16T10:20') === '2026-11-16 10:20:00')
+  check('normalizeTimeText：不存在的日期拒绝（2 月 30 日）', normalizeTimeText('2026-02-30 10:00:00') === '')
+  check('normalizeTimeText：乱填拒绝', normalizeTimeText('not-a-date') === '' && normalizeTimeText('') === '')
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

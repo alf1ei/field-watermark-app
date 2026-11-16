@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v10 + skipWaiting', sw.includes('fw-pwa-v10') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v11 + skipWaiting', sw.includes('fw-pwa-v11') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,13 +67,13 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.5', pkg && pkg.version === '2.1.5')
+check('package.json 版本是 2.1.6', pkg && pkg.version === '2.1.6')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.5（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.5') && workflow.includes('长江现场水印相机 v2.1.5') && workflow.includes('长江现场水印相机-2.1.5-apk') && workflow.includes('长江现场水印相机v2.1.5.apk'))
+check('工作流已同步到 v2.1.6（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.6') && workflow.includes('长江现场水印相机 v2.1.6') && workflow.includes('长江现场水印相机-2.1.6-apk') && workflow.includes('长江现场水印相机v2.1.6.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -109,7 +109,7 @@ check('相册/系统相机回来后流断了重开（visibilitychange + systemCa
 check('闪光灯默认自动（亮度采样 + torch + 自动→常开→关闭）', cam.includes("localStorage.getItem('fw_flash_mode') || 'auto'") && cam.includes('cycleFlashMode') && cam.includes('sampleBrightness') && cam.includes('torch'))
 // 真机 2.1.2：自动模式每 1.5 秒采样、暗了灯就一直亮着，没拍照自己就亮了。修法：预览时灯保持关闭，
 // 只在按快门拍照那一刻按亮度开灯、拍完马上关灯；常开才在预览时亮。
-check('自动闪光预览时不亮灯（无 1.5 秒采样定时器、无 applyAutoFlashOnce）', !cam.includes('startFlashTimer') && !cam.includes('stopFlashTimer') && !cam.includes('applyAutoFlashOnce') && !cam.includes('1500'))
+check('自动闪光预览时不亮灯（无采样定时器、无 applyAutoFlashOnce，预览灯态由 applyFlashPreviewState 管）', !cam.includes('startFlashTimer') && !cam.includes('stopFlashTimer') && !cam.includes('applyAutoFlashOnce') && cam.includes('applyFlashPreviewState'))
 check('自动闪光只在拍照那一刻按亮度开灯、拍完马上关（flashForCapture + finally 关灯）', cam.includes('flashForCapture') && cam.includes('flashLit = await flashForCapture()') && cam.includes('if (flashLit) await setTorch(false)'))
 check('常开/关闭切换时直接开关灯（applyFlashPreviewState）', cam.includes('applyFlashPreviewState') && cam.includes("flashMode.value === 'on'"))
 check('录像自动闪光：开录按亮度决定，停录关灯', cam.includes('recFlashLit') && cam.includes('if (recFlashLit)'))
@@ -120,7 +120,7 @@ check('底部导航有底部安全区 inset', css.includes('env(safe-area-inset-
 check('点水印信息条/定位提示弹出改项目名称（同步聚焦）', cam.includes('openProjectEdit') && cam.includes('editSheet') && cam.includes('input.focus') && cam.includes('@click="openProjectEdit"'))
 check('waitForLocation 有坐标直接拍、无坐标最多等 5 秒（不递归、不久等）', cam.includes('if (loc.value.lon != null) return') && cam.includes('setTimeout(r, 5000)') && cam.includes('await refreshLocation()'))
 check('拍摄页无补地址文案、拍照等定位完成', !cam.includes('补地址') && cam.includes('waitForLocation'))
-check('拍照不再另存原图（无 origPath 保存）', !cam.includes('origPath ='))
+check('拍照另存无水印原图（_orig.jpg，供详情 7 次点击编辑重烧）', cam.includes('_orig.jpg') && cam.includes('origPath') && cam.includes('origBlob'))
 const works = readFileSync(join(root, 'src/components/WorksList.vue'), 'utf8')
 check('WorksList 网页版分享/下载兜底', works.includes('navigator.canShare') && works.includes('download'))
 check('作品页已取消补地址（按钮/逻辑/文案全无）', !works.includes('补地址') && !works.includes('fillAddress'))
@@ -149,10 +149,12 @@ check('重新定位同时重查地址（清退避）', cam.includes('resetAddrRe
 check('地址成功后回填已保存照片（backfillRecordsAddress）', storeJs.includes('backfillRecordsAddress') && cam.includes('backfillRecordsAddress(gcjLon, gcjLat, addr)'))
 check('回填后作品页自动刷新（fw-records-changed）', storeJs.includes("window.dispatchEvent(new Event('fw-records-changed'))") && works.includes("window.addEventListener('fw-records-changed'"))
 // 2.1.3 新增：取景器双指捏合变焦（两指距离变化映射到变焦，限制在设备支持的变焦范围，右上角 1× 同步更新；
-// 只处理双指，单指点按不受影响；preventDefault + touch-action: none 阻止页面滚动/缩放）
-check('双指捏合变焦：两指距离映射到 zoom（夹到设备范围，标签同步）', cam.includes('onPinchStart') && cam.includes('onPinchMove') && cam.includes('pinchDist') && cam.includes('Math.min(caps.max, Math.max(caps.min, z))') && cam.includes('zoom.value = z') && cam.includes('applyConstraints({ advanced: [{ zoom: z }] })'))
-check('捏合只处理双指、阻止浏览器滚动/缩放（touch-action: none）', css.includes('touch-action: none') && cam.includes('e.touches.length !== 2') && cam.includes('passive: false'))
-check('捏合监听在挂载时装上、卸载时拆掉', cam.includes('attachPinch()') && cam.includes('detachPinch()'))
+// v2.1.6 改成统一的 pointer 手势控制器（单指点按对焦、单指竖滑调曝光、双指捏合缩放，按手指数量区分），
+// 旧的 touch 版捏合在真机上没反应已删掉——除了 zoomCaps 拿不到，两套处理混用也互相抢。
+check('双指捏合变焦：统一 pointer 手势按手指数量区分（两指才进 pinch）', cam.includes('onStagePointerDown') && cam.includes('onStagePointerMove') && cam.includes('stagePointers') && cam.includes("stageGesture.kind === 'pinch'") && cam.includes('stagePointers.size === 2'))
+check('捏合两指距离映射到 zoom（夹到设备范围，标签同步）', cam.includes('startDist') && cam.includes('Math.min(caps.max, Math.max(caps.min, z))') && cam.includes('zoom.value = z') && cam.includes('tryApplyZoom(z)'))
+check('捏合只处理双指、阻止浏览器滚动/缩放（touch-action: none）', css.includes('touch-action: none') && cam.includes('stagePointers.size === 2'))
+check('捏合剩一指时重置点按状态（不用旧起点误触发曝光）', cam.includes("stageGesture.kind === 'pinch' && stagePointers.size === 1"))
 // 2.1.4 新增：从作品切回拍摄时，相机重开那一瞬间会闪一下“相机未启动”（假报错）。
 // 根因：模板里 {{ camError || '相机未启动' }} 在 camOk=false 且 camError='' 时就显示这句，
 // 而 startCamera 整个降级链跑完之前 camOk 一直是 false、camError 一直是空。
@@ -170,12 +172,16 @@ check('挂起/恢复方法对 App.vue 暴露（defineExpose）', cam.includes('d
 check('切到相册收起弹层、关预览补光灯（suspend 时四个弹层都关、灯灭）', cam.includes('showRatioPanel.value = false') && cam.includes('showLensPanel.value = false') && cam.includes('editSheet.value = false') && cam.includes('preview.value = null') && cam.includes('if (flashOn.value) setTorch(false)'))
 check('切回拍摄只在流死了才重开（先判视频轨 live，活着只播起来）', cam.includes("track.readyState === 'live'") && cam.includes("await videoEl.value.play()") && cam.includes('resumeCameraIfNeeded'))
 check('相机只在退出 App 时停流（onBeforeUnmount 里 stopStream，tab 切换不走）', cam.includes('stopStream() // 只在退出 App 时停流'))
-check('变焦按钮按住上下滑（pointerdown/move/up + setPointerCapture，滑出按钮外继续）', cam.includes('onZoomDragStart') && cam.includes('onZoomDragMove') && cam.includes('onZoomDragEnd') && cam.includes('setPointerCapture'))
+// v2.1.6：1× 按钮改成长按上下滑（v2.1.5 的按住就滑在真机上没反应——zoomCaps 是 null 时
+// pointerdown 里直接 return，拖动根本没开始；这台手机不报 zoom 能力，见 readTrackCaps 的默认范围）。
+check('变焦按钮长按激活（350ms 定时器 + 震动 + 气泡，没到时间松手当点按）', cam.includes('onZoomPressStart') && cam.includes('onZoomPressMove') && cam.includes('onZoomPressEnd') && cam.includes('zoomLongTimer') && cam.includes('350') && cam.includes('navigator.vibrate'))
+check('长按时重读变焦能力（刚换镜头、或之前没读到时补上）', cam.includes('onZoomPressStart') && cam.includes('readTrackCaps()'))
 check('变焦滑动上滑放大、下滑缩小（指数映射 120px 翻一倍，夹到设备范围）', cam.includes('Math.pow(2, dy / 120)') && cam.includes('Math.min(caps.max, Math.max(caps.min, z))') && cam.includes('zoom.value = z'))
-check('变焦滑动小位移当点按（8px 阈值，打开镜头/变焦面板；拖动后 click 抑制）', cam.includes('Math.abs(dy) < 8') && cam.includes('onZoomBtnClick') && cam.includes('zoomSuppressClick'))
+check('变焦滑动长按后才生效、拖动后 click 抑制（zoomSuppressClick）', cam.includes('zoomPressState.active') && cam.includes('onZoomBtnClick') && cam.includes('zoomSuppressClick'))
 check('变焦滑动时标签实时更新、有拖动气泡指示（zoomDragging + zoom-bubble）', cam.includes('zoomDragging') && cam.includes('zoom-bubble') && cam.includes('zoomLabel'))
 check('变焦按钮 touch-action: none（滑动不被浏览器抢去滚动页面）', css.includes('.zoom-btn') && css.includes('touch-action: none'))
-check('变焦滑动和双指捏合不冲突（捏合在 stage 上，按钮在控制区）', cam.includes('onPinchMove') && cam.includes('onZoomDragMove') && cam.includes("class=\"circle-btn zoom-btn\""))
+check('变焦滑动和双指捏合不冲突（捏合在 stage 上，按钮在控制区）', cam.includes('onStagePointerMove') && cam.includes('onZoomPressMove') && cam.includes("class=\"circle-btn zoom-btn\""))
+check('变焦能力拿不到时给默认范围 1×–10×、真调失败再回滚提示（不一开始堵死）', cam.includes('{ min: 1, max: 10, step: 0.1 }') && cam.includes('tryApplyZoom') && cam.includes('zoomBroken') && cam.includes('当前摄像头不支持变焦'))
 check('底部快门居中：左列前后切换/相册选图、右列重新定位/系统拍照、快门跨两行正中间', cam.includes('side-group left') && cam.includes('side-group right') && cam.includes('class="shutter-row"') && css.includes('.shutter-row .shutter { grid-row: 1 / 3; grid-column: 2; }'))
 check('重新定位和系统拍照上下分开、距离拉开（右列纵向两格，gap 10px）', css.includes('.side-group { display: flex; flex-direction: column; gap: 10px;'))
 check('快门下地址行已取消（无 loc-line/tool-row），录像计时移到取景左上角 rec-chip', !cam.includes('loc-line') && !cam.includes('tool-row') && cam.includes('rec-chip') && cam.includes('recTimeText'))
@@ -205,6 +211,27 @@ check('退出提示复用已有 toast 样式（不另起一套）', appVue.inclu
 check('拍摄页四个弹层都注册进返回栈（比例/镜头/改名/预览）', cam.includes("trackOverlay('cam-ratio'") && cam.includes("trackOverlay('cam-lens'") && cam.includes("trackOverlay('cam-edit'") && cam.includes("trackOverlay('cam-preview'") && cam.includes('pushBackOverlay(id, close)'))
 check('作品页详情和新建文件夹注册进返回栈', works.includes("pushBackOverlay('works-detail'") && works.includes("pushBackOverlay('works-newfolder'"))
 check('卸载时清掉残留弹层注册（App 退出；切 tab 不再卸载）', cam.includes('clearBackOverlays()') && works.includes('clearBackOverlays()'))
+
+// 2.1.6 新增：水印 0.26/0.26、四按钮统一、闪光灯暗光亮、录像不重启相机、
+// 详情 7 次点击编辑文字、取景器点按对焦 + 上下滑调曝光。
+const wmJs = readFileSync(join(root, 'src/utils/watermark.js'), 'utf8')
+check('水印改成 0.26 大小 / 0.26 透明度（烧录 + 实时预览同步）', wmJs.includes('w * 0.26') && wmJs.includes('rgba(255,255,255,0.26)') && css.includes('font-size: 26vw') && css.includes('rgba(255,255,255,.26)'))
+check('四个侧边按钮去掉 logo、都是四个字、大小形状一样', !cam.includes('🔄') && !cam.includes('📍') && cam.includes('系统相机</button>') && !cam.includes('系统相机拍照</button>') && css.includes('width: 88px; height: 40px;'))
+check('自动闪光阈值提到 80（自动曝光提亮过的画面，45 永远判不暗）', cam.includes('FLASH_LUMA_THRESHOLD = 80') && !cam.includes('luma >= 45') && !cam.includes('luma < 45'))
+check('闪光灯不只信 getCapabilities().torch（不报也先试一次，失败才记不支持）', cam.includes('_torchWorks') && cam.includes('track._torchWorks === false'))
+check('自动闪光采新鲜帧、等画面真变亮再拍（最多 800ms）', cam.includes('sampleFreshBrightness') && cam.includes('luma + 15') && cam.includes('Date.now() - t0 < 800'))
+check('录像音频单独取一路，不重启相机流（切模式/开录都不重开）', cam.includes('getRecAudioTrack') && cam.includes('getUserMedia({ audio: true })') && cam.includes('stopRecAudioStream') && cam.includes('const audio = false') && !cam.includes('ensureVideoStream'))
+check('切拍照/录像不重启相机（switchMode 只改 mode）', cam.includes('mode.value = m\n}'))
+check('重拍不重启相机（retake 只关预览、流死了才重开）', cam.includes('重拍不用重启相机') && cam.includes('resumeCameraIfNeeded()'))
+check('详情大图连点 7 次编辑（3 秒窗口、3/4 次给提示、第 7 次开编辑）', works.includes('onDetailImageTap') && works.includes('detailTapCount') && works.includes('3000') && works.includes('再点') && works.includes('editSheet'))
+check('编辑项是项目名称/时间/地址（经纬度只读不给改）', works.includes('editProject') && works.includes('editTimeLocal') && works.includes('editAddress') && works.includes('datetime-local') && works.includes('normalizeTimeText') && works.includes('经纬度是实测记录，不能改'))
+check('编辑保存用原图重烧并替换（burnPhotoWatermark + 覆盖同名文件 + 更新记录）', works.includes('burnPhotoWatermark') && works.includes('readAppFile(rec.origPath') && works.includes('saveToAppStorage(blob, rec.path.split') && works.includes('saveToGallery'))
+check('老照片没原图时明确提示无法编辑', works.includes('没有留存原图'))
+check('编辑弹层注册进返回栈（返回键先关编辑）', works.includes("pushBackOverlay('works-edit-text'"))
+check('取景器点按对焦（对焦框 + pointsOfInterest + focusMode，不支持只显示框）', cam.includes('onStagePointerDown') && cam.includes('focusBox') && cam.includes('showFocusBox') && cam.includes('pointsOfInterest') && cam.includes('focusMode') && css.includes('.focus-box'))
+check('单指竖滑调曝光（exposureCompensation + 太阳指示，不支持给提示）', cam.includes('applyExposure') && cam.includes('exposureCompensation') && cam.includes('expIndicator') && cam.includes('当前摄像头不支持曝光调节') && css.includes('.exp-indicator'))
+check('曝光值对焦后保持（换位置对焦不重置；换镜头尽量恢复）', cam.includes('exposure.value = v') && cam.includes('if (exposure.value !== 0) applyExposure(exposure.value)'))
+check('点信息条/闪光灯/未启动面板不触发对焦（closest 守卫）', cam.includes("closest('.bar, .flash-btn, .cam-off')"))
 
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))

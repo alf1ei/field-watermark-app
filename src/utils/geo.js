@@ -77,6 +77,19 @@ export function formatTime(date = new Date()) {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`
 }
 
+// 详情页 7 次点击编辑文字时的时间输入归一化：接受 datetime-local 的
+// "YYYY-MM-DDTHH:mm:ss"（或缺秒的 "YYYY-MM-DDTHH:mm"）和已有的 "YYYY-MM-DD HH:mm:ss"，
+// 返回标准 "YYYY-MM-DD HH:mm:ss"；格式不对（或日期不存在，如 2026-02-30）返回 ''。
+export function normalizeTimeText(s) {
+  const m = String(s || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/)
+  if (!m) return ''
+  const [, y, mo, d, h, mi, sec] = m
+  const dt = new Date(+y, +mo - 1, +d, +h, +mi, +(sec || '00'))
+  if (dt.getFullYear() !== +y || dt.getMonth() !== +mo - 1 || dt.getDate() !== +d ||
+      dt.getHours() !== +h || dt.getMinutes() !== +mi || dt.getSeconds() !== +(sec || '00')) return ''
+  return formatTime(dt)
+}
+
 // ---- 定位 ----
 // 策略（2026-11-16 用户反馈：个别手机一次高精度定位拿不到）：
 // 高精度 → 普通精度（Wi-Fi/基站）→ 缓存位置，三级兜底，不只试一次就放弃。
