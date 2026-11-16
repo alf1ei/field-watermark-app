@@ -27,8 +27,6 @@ jobs:
           distribution: temurin
           java-version: 21
 
-     
-
       - name: Install Android platforms and build-tools
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
@@ -66,21 +64,23 @@ jobs:
           cd android
           gradle assembleDebug --no-daemon --console=plain
 
+      - name: Rename APK to 长江现场水印相机v2.1
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/长江现场水印相机v2.1.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 现场水印byccj-1.0.0-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: 长江现场水印相机-2.1.0-apk
+          path: android/app/build/outputs/apk/debug/长江现场水印相机v2.1.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Create Release v1.0.0 with APK
+      - name: Create Release v2.1.0 with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: 现场水印by ccj v1.0.0
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          tag_name: v2.1.0
+          name: 长江现场水印相机 v2.1.0
+          files: android/app/build/outputs/apk/debug/长江现场水印相机v2.1.apk
           fail_on_unmatched_files: true
 
       - name: Publish APK as base64 chunks (retrieval fallback)
@@ -104,5 +104,5 @@ jobs:
           git config user.name "github-actions"
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add -A
-          git commit -qm "APK base64 chunks v1.0.0"
+          git commit -qm "APK base64 chunks v2.1.0"
           git push -qf origin releases-b64
