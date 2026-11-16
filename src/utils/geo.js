@@ -203,30 +203,41 @@ async function tryPosition(opts, ms) {
   }
 }
 
-export async function getPosition() {
+export async function getPosition(onRefine) {
   // 权限被拒直接抛 LOC_DENIED（不再试，也不用缓存兜底——用户明确拒绝了定位）
   await ensureLocationPermission()
-  const attempts = [
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000, ms: 12000 },
-    { enableHighAccuracy: false, timeout: 15000, maximumAge: 5000, ms: 12000 },
-    { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000, ms: 8000 }
-  ]
-  let lastErr = null
-  for (const a of attempts) {
-    const { ms, ...opts } = a
-    try {
-      const pos = await tryPosition(opts, ms)
-      saveLastFix(pos)
-      return pos
-    } catch (e) {
-      if (isPermissionDenied(e)) throw e
-      lastErr = e
-    }
+  // 两路并行：低精度（网络定位，通常 1–3 秒就有粗位置）+ 高精度 GPS（室内可能很久才定）；
+  // 谁先回来先用谁，不让用户先对着“正在定位…”等十几秒；
+  // 后到的那一路如果精度更好，用 onRefine 回调精修（调用方更新界面/地址）。
+  const lowP = tryPosition({ enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }, 8000)
+  const highP = tryPosition({ enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }, 20000)
+  const first = await Promise.race([
+    lowP.then((pos) => ({ ok: true, pos })),
+    highP.then((pos) => ({ ok: true, pos })),
+    Promise.allSettled([lowP, highP]).then((rs) => {
+      const rej = rs.find((r) => r.status === 'rejected')
+      return { ok: false, err: rej ? rej.reason : new Error('定位失败') }
+    })
+  ])
+  if (!first.ok) {
+    // 两路都失败：用上次定位兜底（带 stale 标记，界面会标“上次位置”），再没有才报错
+    const stale = loadLastFix()
+    if (stale) return { lon: stale.lon, lat: stale.lat, accuracy: stale.accuracy, source: 'cached', stale: true }
+    throw first.err || new Error('定位失败')
   }
-  // 全部失败：用上次定位兜底（带 stale 标记，界面会标“上次位置”），再没有才报错
-  const stale = loadLastFix()
-  if (stale) return { lon: stale.lon, lat: stale.lat, accuracy: stale.accuracy, source: 'cached', stale: true }
-  throw lastErr || new Error('定位失败')
+  let best = first.pos
+  saveLastFix(best)
+  // 后到的那一路如果精度更好，回调精修；精度没更好就不打扰调用方。
+  const maybeRefine = (p) => {
+    if (!p || p.accuracy == null) return
+    if (best.accuracy != null && p.accuracy >= best.accuracy) return
+    best = p
+    saveLastFix(p)
+    if (typeof onRefine === 'function') { try { onRefine(p) } catch { /* ignore */ } }
+  }
+  lowP.then(maybeRefine).catch(() => {})
+  highP.then(maybeRefine).catch(() => {})
+  return { ...best, stale: false }
 }
 
 // 后台持续监听：GPS 热起来后自动补上经纬度/地址。返回停止函数。
@@ -331,28 +342,55 @@ export function setAmapKey(key) {
   try { localStorage.setItem('fw_amap_key', (key || '').trim()) } catch { /* ignore */ }
 }
 
-async function fetchWithTimeout(url, ms = 8000) {
-  const ctrl = new AbortController()
-  const t = setTimeout(() => ctrl.abort(), ms)
-  try {
-    const r = await fetch(url, { signal: ctrl.signal })
-    if (!r.ok) throw new Error('http ' + r.status)
-    return await r.json()
-  } finally { clearTimeout(t) }
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+// 带重试的 JSON 拉取：每次请求单独超时；失败后按退避等待再试；
+// 预算（deadline）由调用方给，超过预算不再发起新请求。
+// 国内网络很慢时（用户实测只有几十 B/s），一次 8 秒经常不够，必须重试——
+// 之前每路只试一次、总预算 12 秒，Nominatim 从国内经常不通，地址就一直拿不到。
+async function fetchJsonWithRetry(url, { timeoutMs = 15000, attempts = 3, backoffMs = 1000, deadline = 0 } = {}) {
+  let lastErr = null
+  for (let i = 0; i < attempts; i++) {
+    if (deadline && Date.now() >= deadline) break
+    const remain = deadline ? deadline - Date.now() : timeoutMs
+    if (remain <= 0) break
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), Math.min(timeoutMs, remain))
+      try {
+        const r = await fetch(url, { signal: ctrl.signal })
+        if (!r.ok) throw new Error('http ' + r.status)
+        return await r.json()
+      } finally { clearTimeout(t) }
+    } catch (e) {
+      lastErr = e
+      if (i < attempts - 1) {
+        const wait = Math.min(backoffMs * (i + 1), deadline ? Math.max(0, deadline - Date.now()) : backoffMs * (i + 1))
+        if (wait > 0) await sleep(wait)
+      }
+    }
+  }
+  throw lastErr || new Error('fetch 失败')
 }
 
 /**
  * @param {number} gcjLon GCJ-02 经度
  * @param {number} gcjLat GCJ-02 纬度
+ * @param {object} [opts] 可注入的预算（测试用小值；默认总预算 45 秒）
  * @returns {Promise<string>} 地址文本，拿不到返回 ''
  */
-export async function reverseGeocode(gcjLon, gcjLat) {
-  // 1) 高德（需自填 Key，否则跳过）
+export async function reverseGeocode(gcjLon, gcjLat, opts = {}) {
+  const budgetMs = opts.budgetMs || 45000
+  const deadline = Date.now() + budgetMs
+  // 1) 高德（需自填 Key，否则跳过；填了 Key 一定先走这路，国内最可靠）
   const amapKey = getAmapKey()
   if (amapKey) {
     try {
-      const j = await fetchWithTimeout(
-        `https://restapi.amap.com/v3/geocode/regeo?key=${encodeURIComponent(amapKey)}&location=${gcjLon},${gcjLat}&extensions=base&output=json`
+      const j = await fetchJsonWithRetry(
+        `https://restapi.amap.com/v3/geocode/regeo?key=${encodeURIComponent(amapKey)}&location=${gcjLon},${gcjLat}&extensions=base&output=json`,
+        { timeoutMs: opts.amapTimeoutMs || 10000, attempts: opts.amapAttempts || 2, backoffMs: 1000, deadline }
       )
       if (j && j.status === '1' && j.regeocode) {
         const short = formatAmapAddress(j.regeocode, j.regeocode.pois || [])
@@ -361,12 +399,12 @@ export async function reverseGeocode(gcjLon, gcjLat) {
     } catch { /* 掉到下一个源 */ }
   }
   // 2) Nominatim（OpenStreetMap，无需 Key；入参用 WGS-84，先把 GCJ-02 转回去再调，
-  //    否则国内会有约几百米偏移；无 Key 时仍尽力返回一个地址，拿不到则留空）
+  //    否则国内会有约几百米偏移；从国内访问经常很慢/不通，所以多试几次、每次放宽到 15 秒）
   try {
     const wgs = gcj02ToWgs84(gcjLon, gcjLat)
-    const j = await fetchWithTimeout(
+    const j = await fetchJsonWithRetry(
       `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${wgs.lat}&lon=${wgs.lon}&accept-language=zh-CN&zoom=18&addressdetails=1`,
-      8000
+      { timeoutMs: opts.nominatimTimeoutMs || 15000, attempts: opts.nominatimAttempts || 3, backoffMs: 1500, deadline }
     )
     const short = formatNominatimAddress(j)
     if (short) return short

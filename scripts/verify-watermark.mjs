@@ -8,9 +8,10 @@
  * 注意：Node 里没有真实 Canvas，本脚本验证的是绘制指令；真实像素渲染需在浏览器/WebView 里看，
  * 另见 README 的真机验证清单。带 --render 时若装了 node-canvas 会额外出一张真实水印样图。
  */
-import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition } from '../src/utils/geo.js'
+import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition, reverseGeocode } from '../src/utils/geo.js'
 import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
 import { pushBackOverlay, removeBackOverlay, popBackOverlay, backOverlayCount, clearBackOverlays } from '../src/utils/backstack.js'
+import { backfillRecordsAddress } from '../src/utils/store.js'
 
 let pass = 0, fail = 0
 function check(name, ok, extra = '') {
@@ -174,6 +175,61 @@ console.log('8) 返回键弹层栈 backstack（后打开先关）')
   check('close 里抛错时 pop 仍返回 true、不抛错', popBackOverlay() === true)
   clearBackOverlays()
   check('clear 清空栈', backOverlayCount() === 0)
+}
+
+// ---------- 9. 地址重试 + 高德优先 + 地址回填（真机 2.1.2：经纬度有了，地址一直拿不到） ----------
+// 国内网络很慢时（用户实测几十 B/s），Nominatim 一次 8 秒经常不够：每路多试几次、总预算放宽到 45 秒；
+// 填了高德 Key 一定先走高德；地址后来才拿到时，已保存的同地点照片地址要补上。
+console.log('9) 地址重试 / 高德优先 / 地址回填')
+{
+  const origFetch = globalThis.fetch
+  const origLocalStorage = globalThis.localStorage
+  // 内存版 localStorage 替身（Node 里没有 localStorage；geo/store 的读写都走它）
+  const memStore = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => { memStore.set(k, String(v)) },
+    removeItem: (k) => { memStore.delete(k) }
+  }
+  try {
+    // 9a. Nominatim：前两次请求失败，第三次成功——重试后应拿到地址
+    let nomCalls = 0
+    globalThis.fetch = async () => {
+      nomCalls++
+      if (nomCalls <= 2) throw new Error('network down')
+      return { ok: true, json: async () => ({ address: { state: '甘肃省', city: '庆阳市', county: '西峰区', road: '测试路', suburb: '南街街道' } }) }
+    }
+    const addrNom = await reverseGeocode(106.9359, 36.0559, { budgetMs: 5000, nominatimTimeoutMs: 500, nominatimAttempts: 3, backoffMs: 10 })
+    check('Nominatim 失败两次后第三次重试成功', addrNom.includes('甘肃省') && addrNom.includes('庆阳市') && nomCalls === 3, addrNom)
+    // 9b. 填了高德 Key：只调高德，不调 Nominatim
+    memStore.set('fw_amap_key', 'test-key-123')
+    let amapCalled = false
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('restapi.amap.com')) {
+        amapCalled = true
+        return { ok: true, json: async () => ({ status: '1', regeocode: { formatted_address: '甘肃省庆阳市西峰区南街街道测试路1号', addressComponent: { province: '甘肃省', city: '庆阳市', district: '西峰区', township: '南街街道', street: '测试路', building: { name: '' }, neighborhood: { name: '' } }, pois: [] } }) }
+      }
+      throw new Error('不该调 Nominatim')
+    }
+    const addrAmap = await reverseGeocode(106.94, 36.05, { budgetMs: 5000, amapTimeoutMs: 500, amapAttempts: 2, backoffMs: 10 })
+    check('填了高德 Key 时走高德（不调 Nominatim）', amapCalled && addrAmap.includes('甘肃省') && addrAmap.includes('庆阳市'), addrAmap)
+    memStore.delete('fw_amap_key')
+    // 9c. 地址回填：只补同地点（500 米内）且地址为空的记录
+    const seed = [
+      { id: 'r1', lon: 106.94, lat: 36.05, gcjLon: 106.94, gcjLat: 36.05, address: '', time: '2026-11-16 15:00:00' },
+      { id: 'r2', lon: 116.39, lat: 39.90, gcjLon: 116.39, gcjLat: 39.90, address: '', time: '2026-11-16 15:00:00' },
+      { id: 'r3', lon: 106.94, lat: 36.05, gcjLon: 106.94, gcjLat: 36.05, address: '已有地址', time: '2026-11-16 15:00:00' }
+    ]
+    memStore.set('fw_records_v1', JSON.stringify(seed))
+    const n = backfillRecordsAddress(106.94, 36.05, '甘肃省庆阳市西峰区南街街道')
+    const after = JSON.parse(memStore.get('fw_records_v1'))
+    check('地址回填只补同地点且地址为空的记录', n === 1 && after[0].address === '甘肃省庆阳市西峰区南街街道' && after[1].address === '' && after[2].address === '已有地址', `补了 ${n} 条`)
+    check('地址回填无地址时返回 0 不改记录', backfillRecordsAddress(106.94, 36.05, '') === 0)
+  } finally {
+    globalThis.fetch = origFetch
+    if (origLocalStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = origLocalStorage
+  }
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

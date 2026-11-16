@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v7 + skipWaiting', sw.includes('fw-pwa-v7') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v8 + skipWaiting', sw.includes('fw-pwa-v8') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,13 +67,13 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.2', pkg && pkg.version === '2.1.2')
+check('package.json 版本是 2.1.3', pkg && pkg.version === '2.1.3')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.2（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.2') && workflow.includes('长江现场水印相机 v2.1.2') && workflow.includes('长江现场水印相机-2.1.2-apk') && workflow.includes('长江现场水印相机v2.1.2.apk'))
+check('工作流已同步到 v2.1.3（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.3') && workflow.includes('长江现场水印相机 v2.1.3') && workflow.includes('长江现场水印相机-2.1.3-apk') && workflow.includes('长江现场水印相机v2.1.3.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -104,12 +104,18 @@ check('超时/失败的 getUserMedia 残留流会被关掉（不占摄像头）'
 check('变焦失败回滚到之前倍数、不把流搞崩', cam.includes('const prev = zoom.value') && cam.includes('zoom.value = prev'))
 check('相册/系统相机回来后流断了重开（visibilitychange + systemCamera finally）', cam.includes('resumeCameraIfNeeded') && cam.includes('visibilitychange') && cam.includes('onVisibilityChange'))
 check('闪光灯默认自动（亮度采样 + torch + 自动→常开→关闭）', cam.includes("localStorage.getItem('fw_flash_mode') || 'auto'") && cam.includes('cycleFlashMode') && cam.includes('sampleBrightness') && cam.includes('torch'))
+// 真机 2.1.2：自动模式每 1.5 秒采样、暗了灯就一直亮着，没拍照自己就亮了。修法：预览时灯保持关闭，
+// 只在按快门拍照那一刻按亮度开灯、拍完马上关灯；常开才在预览时亮。
+check('自动闪光预览时不亮灯（无 1.5 秒采样定时器、无 applyAutoFlashOnce）', !cam.includes('startFlashTimer') && !cam.includes('stopFlashTimer') && !cam.includes('applyAutoFlashOnce') && !cam.includes('1500'))
+check('自动闪光只在拍照那一刻按亮度开灯、拍完马上关（flashForCapture + finally 关灯）', cam.includes('flashForCapture') && cam.includes('flashLit = await flashForCapture()') && cam.includes('if (flashLit) await setTorch(false)'))
+check('常开/关闭切换时直接开关灯（applyFlashPreviewState）', cam.includes('applyFlashPreviewState') && cam.includes("flashMode.value === 'on'"))
+check('录像自动闪光：开录按亮度决定，停录关灯', cam.includes('recFlashLit') && cam.includes('if (recFlashLit)'))
 check('红色快门（#ff3b30）', readFileSync(join(root, 'src/style.css'), 'utf8').includes('#ff3b30') && readFileSync(join(root, 'src/style.css'), 'utf8').includes('background: #ff3b30'))
 const css = readFileSync(join(root, 'src/style.css'), 'utf8')
 check('顶部安全区：.app 顶部留 max(env(safe-area-inset-top), 32px)，不撞状态栏/挖孔', css.includes('padding-top: max(env(safe-area-inset-top, 0px), 32px)'))
 check('底部导航有底部安全区 inset', css.includes('env(safe-area-inset-bottom)'))
 check('点水印信息条/定位提示/地址行弹出改项目名称（同步聚焦）', cam.includes('openProjectEdit') && cam.includes('editSheet') && cam.includes('input.focus') && cam.includes('@click="openProjectEdit"'))
-check('waitForLocation 递归 bug 已修（无定位时调 refreshLocation）', cam.includes('if (loc.value.lon == null) await refreshLocation()'))
+check('waitForLocation 有坐标直接拍、无坐标最多等 5 秒（不递归、不久等）', cam.includes('if (loc.value.lon != null) return') && cam.includes('setTimeout(r, 5000)') && cam.includes('await refreshLocation()'))
 check('拍摄页无补地址文案、拍照等定位完成', !cam.includes('补地址') && cam.includes('waitForLocation'))
 check('拍照不再另存原图（无 origPath 保存）', !cam.includes('origPath ='))
 const works = readFileSync(join(root, 'src/components/WorksList.vue'), 'utf8')
@@ -119,13 +125,31 @@ check('作品页文件夹（新建/展开/删除/移动到文件夹，存 localS
 check('未归档按日期分组、今天展开、早先堆叠可收起', works.includes('dateGroups') && works.includes('stack-card') && works.includes('收起堆叠'))
 check('作品页内嵌设置（水印文字 + 高德 Key）', works.includes('settings-card') && works.includes('getWatermarkText') && works.includes('setAmapKey'))
 const geoJs = readFileSync(join(root, 'src/utils/geo.js'), 'utf8')
-check('定位三级兜底（高精度→普通→缓存）', geoJs.includes('enableHighAccuracy: false') && geoJs.includes('maximumAge: 600000'))
+// 真机 2.1.2：先等高精度 GPS 耗满 12 秒超时才降级，用户体感很慢。
+// 修法：打开先显示上次缓存坐标（标明“上次位置”）；新定位低精度/高精度两路并行、谁先回来用谁，
+// 高精度后到且更准时后台精修。
+check('定位两路并行先到先得 + 高精度后到精修（onRefine）', geoJs.includes('Promise.race') && geoJs.includes('enableHighAccuracy: false') && geoJs.includes('enableHighAccuracy: true') && geoJs.includes('onRefine') && geoJs.includes('maybeRefine'))
+check('打开 App 立刻显示上次缓存坐标（标明“上次位置”）', cam.includes('showCachedFixImmediately') && cam.includes('loadLastFix') && cam.includes('上次位置'))
 check('定位手动超时兜底（withTimeout + TIMEOUT，不无限挂起）', geoJs.includes('withTimeout') && geoJs.includes("err.code = 'TIMEOUT'") && geoJs.includes('Promise.race'))
 check('定位显式要权限（requestPermissions），被拒报 LOC_DENIED', geoJs.includes('requestPermissions') && geoJs.includes('LOC_DENIED'))
 check('定位全部失败用上次定位兜底（fw_last_loc + stale 标记）', geoJs.includes('fw_last_loc') && geoJs.includes('saveLastFix') && geoJs.includes('loadLastFix') && geoJs.includes('stale: true'))
 check('后台监听 20 秒不出位置再开一路浏览器监听', geoJs.includes('watchdog') && geoJs.includes('20000'))
 check('地址缓存 500 米内先显示（fw_last_addr）', geoJs.includes('getCachedAddress') && geoJs.includes('saveCachedAddress') && geoJs.includes('fw_last_addr'))
-check('取地址整体 12 秒超时、失败显示经纬度不卡“获取中”', cam.includes('resolveAddress') && cam.includes("withTimeout(reverseGeocode(gcjLon, gcjLat), 12000") && cam.includes('locLineText') && cam.includes('addrState'))
+// 真机 2.1.2：经纬度有了，地址一直拿不到。根因：Nominatim 国内常被挡/很慢，
+// 旧版总预算只有 12 秒、每路只试一次、无重试、后台重试只靠监听位置更新（室内静止不动不触发）。
+// 修法：总预算 45 秒，每路多试几次带退避；App 打开期间后台循环重试（30 秒→5 分钟退避），网络恢复立刻重查；
+// 重新定位清掉退避重查地址；成功后回填已保存照片的地址。
+check('取地址总预算 45 秒 + 多次重试带退避（非 12 秒单次）', cam.includes('resolveAddress') && geoJs.includes('opts.budgetMs || 45000') && geoJs.includes('fetchJsonWithRetry') && !cam.includes("withTimeout(reverseGeocode(gcjLon, gcjLat), 12000") && cam.includes('locLineText') && cam.includes('addrState'))
+check('高德 Key 优先 + Nominatim 兜底（reverseGeocode）', geoJs.includes('getAmapKey') && geoJs.includes('restapi.amap.com') && geoJs.includes('nominatim.openstreetmap.org'))
+check('地址后台循环重试（退避 30 秒→5 分钟）+ 网络恢复重查', cam.includes('addrRetryTick') && cam.includes('addrRetryDelay') && cam.includes('Math.min(addrRetryDelay * 2, 300000)') && cam.includes("window.addEventListener('online'"))
+check('重新定位同时重查地址（清退避）', cam.includes('resetAddrRetryNow') && cam.includes('resetAddrRetryNow()'))
+check('地址成功后回填已保存照片（backfillRecordsAddress）', storeJs.includes('backfillRecordsAddress') && cam.includes('backfillRecordsAddress(gcjLon, gcjLat, addr)'))
+check('回填后作品页自动刷新（fw-records-changed）', storeJs.includes("window.dispatchEvent(new Event('fw-records-changed'))") && works.includes("window.addEventListener('fw-records-changed'"))
+// 2.1.3 新增：取景器双指捏合变焦（两指距离变化映射到变焦，限制在设备支持的变焦范围，右上角 1× 同步更新；
+// 只处理双指，单指点按不受影响；preventDefault + touch-action: none 阻止页面滚动/缩放）
+check('双指捏合变焦：两指距离映射到 zoom（夹到设备范围，标签同步）', cam.includes('onPinchStart') && cam.includes('onPinchMove') && cam.includes('pinchDist') && cam.includes('Math.min(caps.max, Math.max(caps.min, z))') && cam.includes('zoom.value = z') && cam.includes('applyConstraints({ advanced: [{ zoom: z }] })'))
+check('捏合只处理双指、阻止浏览器滚动/缩放（touch-action: none）', css.includes('touch-action: none') && cam.includes('e.touches.length !== 2') && cam.includes('passive: false'))
+check('捏合监听在挂载时装上、卸载时拆掉', cam.includes('attachPinch()') && cam.includes('detachPinch()'))
 check('后台持续监听定位', geoJs.includes('watchPosition') && geoJs.includes('clearWatch'))
 check('refreshLocation 返回进行中的 promise（CameraView 里 locPending）', cam.includes('if (locPending) return locPending') && cam.includes('return locPending'))
 check('地址短格式 5 级（省+市+区县+街道/镇+道路/小区/派出所/社区）', geoJs.includes('formatAmapAddress') && geoJs.includes('formatNominatimAddress') && geoJs.includes('shortenAddressFromParts'))

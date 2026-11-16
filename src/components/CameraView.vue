@@ -137,9 +137,9 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
-import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters } from '../utils/geo.js'
+import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters, loadLastFix } from '../utils/geo.js'
 import { drawWatermark, drawVideoFrame, burnPhotoWatermark, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
-import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, deleteAppFile } from '../utils/store.js'
+import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, deleteAppFile, backfillRecordsAddress } from '../utils/store.js'
 
 const emit = defineEmits(['saved'])
 const videoEl = ref(null)
@@ -186,10 +186,12 @@ const recording = ref(false)
 const recSeconds = ref(0)
 const preview = ref(null)
 const toast = ref('')
-const loc = ref({ lon: null, lat: null, gcjLon: null, gcjLat: null, address: '' })
+const loc = ref({ lon: null, lat: null, gcjLon: null, gcjLat: null, address: '', accuracy: null })
 const locBusy = ref(false)
 const locError = ref(false)
 const locHint = ref('正在定位…')
+// locStale：当前显示的坐标是不是“上次位置”（缓存），界面会明确标出来；后台拿到新定位后清掉。
+const locStale = ref(false)
 // 地址状态：idle | fetching（联网取地址中）| cached（显示的是缓存地址）| ok | failed（取不到）
 // 定位行据此区分“获取中”和“已失败”：失败后直接显示经纬度、地址留空，不一直卡在“获取中”。
 const addrState = ref('idle')
@@ -209,7 +211,11 @@ let recMeta = null
 let locPending = null
 let stopWatch = null
 let addrFetching = false
-let lastAddrAt = 0
+// 地址后台重试：地址没拿到时 App 打开期间一直重试（退避 30 秒 → 60 秒 → 120 秒 → 300 秒上限），
+// 拿到后停；网络恢复、重新定位时立刻重查一次。不依赖 watchPosition 的位置更新触发，
+// 室内静止不动时也能重试。
+let addrRetryTimer = null
+let addrRetryDelay = 30000
 
 // 返回键弹层栈：弹层开/关时注册/注销，App.vue 的 backButton 只读这个栈，
 // 按打开顺序倒着关（后打开的先关）。遮罩点击、✕ 按钮、保存等任何关法都会触发 watcher 注销。
@@ -341,7 +347,7 @@ async function startCamera() {
           catch { zoom.value = 1 }
         }
       }
-      applyAutoFlashOnce()
+      applyFlashPreviewState()
       if (level.clearDeviceId && cameraId.value) {
         cameraId.value = ''
         try { localStorage.removeItem('fw_camera_device') } catch { /* ignore */ }
@@ -424,6 +430,59 @@ async function applyZoom(z) {
     readTrackCaps()
   }
 }
+
+// ---- 双指捏合变焦：在取景器上两指张开/合拢，距离变化映射到变焦倍数 ----
+// 只处理双指；单指点按（点信息条改项目名、点按钮）完全不受影响；
+// 捏合时 preventDefault 阻止页面滚动/缩放（stage 上还加了 touch-action: none）。
+let pinchState = null
+function pinchDist(t1, t2) {
+  return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY)
+}
+function onPinchStart(e) {
+  if (e.touches.length !== 2) return
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (!track || !zoomCaps.value) { pinchState = null; return }
+  pinchState = {
+    startDist: pinchDist(e.touches[0], e.touches[1]),
+    startZoom: zoom.value,
+    lastApplied: zoom.value
+  }
+}
+function onPinchMove(e) {
+  if (!pinchState || e.touches.length !== 2) return
+  e.preventDefault()
+  const d = pinchDist(e.touches[0], e.touches[1])
+  if (!pinchState.startDist) return
+  const caps = zoomCaps.value
+  if (!caps) return
+  let z = pinchState.startZoom * (d / pinchState.startDist)
+  z = Math.min(caps.max, Math.max(caps.min, z))
+  z = Math.round(z * 10) / 10
+  if (Math.abs(z - pinchState.lastApplied) < 0.05) return
+  pinchState.lastApplied = z
+  zoom.value = z // 右上角 1× 显示同步更新（zoomLabel 是 zoom 的 computed）
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (track) track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {})
+}
+function onPinchEnd(e) {
+  if (e.touches.length < 2) pinchState = null
+}
+function attachPinch() {
+  const stage = stageEl.value
+  if (!stage) return
+  stage.addEventListener('touchstart', onPinchStart, { passive: true })
+  stage.addEventListener('touchmove', onPinchMove, { passive: false })
+  stage.addEventListener('touchend', onPinchEnd, { passive: true })
+  stage.addEventListener('touchcancel', onPinchEnd, { passive: true })
+}
+function detachPinch() {
+  const stage = stageEl.value
+  if (!stage) return
+  stage.removeEventListener('touchstart', onPinchStart)
+  stage.removeEventListener('touchmove', onPinchMove)
+  stage.removeEventListener('touchend', onPinchEnd)
+  stage.removeEventListener('touchcancel', onPinchEnd)
+}
 // 改项目名称：弹层常驻 DOM，靠位移隐藏；点水印信息条时在点击手势内同步聚焦，手机输入法直接弹出来。
 function openProjectEdit() {
   editProject.value = project.value
@@ -440,9 +499,12 @@ function saveProjectEdit() {
   editSheet.value = false
   showToast('项目名称已更新')
 }
-// ---- 闪光灯：默认自动，采样取景画面亮度，暗了自动开补光 ----
-let flashTimer = null
+// ---- 闪光灯：自动模式下预览时补光灯保持关闭，只在按快门拍照那一刻才按亮度决定开不开灯 ----
+// 之前每 1.5 秒采样、暗了就把灯开着的做法是错的：没拍照灯就自己亮了。
+// “常开”才在预览时一直亮；“关闭”永远不亮；录像时自动模式在开录时按亮度决定，停录关灯。
 let flashCanvas = null
+// 录像时自动闪光灯是否亮着（停录时要关掉）
+let recFlashLit = false
 function sampleBrightness() {
   try {
     const v = videoEl.value
@@ -470,19 +532,14 @@ function torchSupported() {
   const track = stream.value && stream.value.getVideoTracks()[0]
   return !!(track && track._torchSupported)
 }
-async function applyAutoFlashOnce() {
-  if (flashMode.value !== 'auto' || !camOk.value) return
-  if (!torchSupported()) return
-  const luma = sampleBrightness()
-  if (luma == null) return
-  await setTorch(luma < 45)
-}
-function startFlashTimer() {
-  stopFlashTimer()
-  flashTimer = setInterval(() => { applyAutoFlashOnce() }, 1500)
-}
-function stopFlashTimer() {
-  if (flashTimer) { clearInterval(flashTimer); flashTimer = null }
+// 按当前模式设置预览时的灯状态：常开→亮，其他→灭（自动模式预览不亮灯）
+async function applyFlashPreviewState() {
+  if (!camOk.value) return
+  if (flashMode.value === 'on') {
+    if (torchSupported()) await setTorch(true)
+  } else {
+    await setTorch(false)
+  }
 }
 async function cycleFlashMode() {
   flashMode.value = flashMode.value === 'auto' ? 'on' : flashMode.value === 'on' ? 'off' : 'auto'
@@ -490,12 +547,21 @@ async function cycleFlashMode() {
   if (flashMode.value === 'on') {
     if (!torchSupported()) { showToast('当前摄像头不支持闪光灯'); return }
     await setTorch(true)
-  } else if (flashMode.value === 'off') {
-    await setTorch(false)
   } else {
-    await applyAutoFlashOnce()
+    await setTorch(false)
   }
   showToast('闪光灯：' + flashLabel.value)
+}
+// 拍照那一刻才用的自动闪光：暗了开灯、等灯亮（250ms）、拍完调用方马上关灯。
+// 返回灯是否亮过（供 takePhoto 在 finally 里关灯）；不暗/不支持返回 false。
+async function flashForCapture() {
+  if (flashMode.value !== 'auto') return false
+  if (!torchSupported()) return false
+  const luma = sampleBrightness()
+  if (luma == null || luma >= 45) return false
+  const ok = await setTorch(true)
+  if (ok) await new Promise((r) => setTimeout(r, 250))
+  return ok
 }
 async function switchCameraById(id) {
   if (id) cameraId.value = id
@@ -545,19 +611,21 @@ function onVisibilityChange() {
   if (!document.hidden) resumeCameraIfNeeded()
 }
 
-// 取地址：先用同一地点 500 米内的缓存地址顶上，再联网取新的；整体最多等 12 秒，
-// 超时/失败就保留缓存（或留空），绝不一直卡在“获取中”。
+// 取地址：先用同一地点 500 米内的缓存地址顶上，再联网取新的；
+// 总预算 45 秒（慢网下一次 8 秒根本不够，要多试几次），超时/失败就保留缓存（或留空），
+// 绝不一直卡在“获取中”。地址后来才拿到时，把已保存的同地点照片地址也补上。
 async function resolveAddress(gcjLon, gcjLat) {
   const cached = getCachedAddress(gcjLon, gcjLat)
   loc.value.address = cached || ''
   addrState.value = cached ? 'cached' : 'fetching'
   try {
-    const addr = await withTimeout(reverseGeocode(gcjLon, gcjLat), 12000, '获取地址')
+    const addr = await withTimeout(reverseGeocode(gcjLon, gcjLat), 50000, '获取地址')
     if (addr) {
       loc.value.address = addr
       addrState.value = 'ok'
       lastAddrCoords = { lon: gcjLon, lat: gcjLat }
       saveCachedAddress(gcjLon, gcjLat, addr)
+      backfillRecordsAddress(gcjLon, gcjLat, addr)
       return addr
     }
   } catch { /* 超时/失败：留空或保留缓存 */ }
@@ -570,17 +638,110 @@ async function resolveAddress(gcjLon, gcjLat) {
   return loc.value.address || ''
 }
 
+// 当前位置还需不需要地址：没地址要；有地址但已移动超 500 米也要（旧地址已不适用）。
+function needsAddress() {
+  if (loc.value.lon == null) return false
+  if (!loc.value.address) return true
+  if (!lastAddrCoords) return false
+  const gcjLon = loc.value.gcjLon != null ? loc.value.gcjLon : loc.value.lon
+  const gcjLat = loc.value.gcjLat != null ? loc.value.gcjLat : loc.value.lat
+  return distMeters(gcjLon, gcjLat, lastAddrCoords.lon, lastAddrCoords.lat) > 500
+}
+function stopAddrRetry() {
+  if (addrRetryTimer) { clearTimeout(addrRetryTimer); addrRetryTimer = null }
+}
+function scheduleAddrRetry() {
+  stopAddrRetry()
+  addrRetryTimer = setTimeout(addrRetryTick, addrRetryDelay)
+}
+// 后台地址重试的一次 tick：需要地址就查一次；拿到停（回到 30 秒慢轮询，等以后移动时再查）；
+// 没拿到退避加长再约。App 打开期间一直跑，不依赖位置更新触发。
+function addrRetryTick() {
+  addrRetryTimer = null
+  if (!needsAddress()) {
+    addrRetryDelay = 30000
+    scheduleAddrRetry()
+    return
+  }
+  if (addrFetching) { scheduleAddrRetry(); return }
+  addrFetching = true
+  const gcjLon = loc.value.gcjLon != null ? loc.value.gcjLon : loc.value.lon
+  const gcjLat = loc.value.gcjLat != null ? loc.value.gcjLat : loc.value.lat
+  resolveAddress(gcjLon, gcjLat).then((addr) => {
+    if (addr) {
+      addrRetryDelay = 30000
+      locHint.value = '定位与地址已就绪'
+    } else {
+      addrRetryDelay = Math.min(addrRetryDelay * 2, 300000)
+    }
+  }).catch(() => {
+    addrRetryDelay = Math.min(addrRetryDelay * 2, 300000)
+  }).finally(() => {
+    addrFetching = false
+    scheduleAddrRetry()
+  })
+}
+function startAddrRetryLoop() {
+  addrRetryDelay = 30000
+  scheduleAddrRetry()
+}
+// 重新定位 / 网络恢复时调用：清掉退避，马上重查一次地址（有坐标、没地址、没在查时）。
+function resetAddrRetryNow() {
+  stopAddrRetry()
+  addrRetryDelay = 30000
+  if (loc.value.lon != null && !loc.value.address && !addrFetching) {
+    addrFetching = true
+    const gcjLon = loc.value.gcjLon != null ? loc.value.gcjLon : loc.value.lon
+    const gcjLat = loc.value.gcjLat != null ? loc.value.gcjLat : loc.value.lat
+    resolveAddress(gcjLon, gcjLat).finally(() => { addrFetching = false; scheduleAddrRetry() })
+  } else {
+    scheduleAddrRetry()
+  }
+}
+function onOnline() {
+  if (loc.value.lon != null && !loc.value.address) resetAddrRetryNow()
+}
+
+// 打开 App 立刻先显示上次缓存的坐标（标明是“上次位置”），再去取新的；
+// 不让用户先对着“正在定位…”等十几秒才看到坐标。
+function showCachedFixImmediately() {
+  const cached = loadLastFix()
+  if (!cached) return
+  const gcj = wgs84ToGcj02(cached.lon, cached.lat)
+  const cachedAddr = getCachedAddress(gcj.lon, gcj.lat)
+  loc.value = { lon: cached.lon, lat: cached.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: cachedAddr, accuracy: cached.accuracy || null }
+  locStale.value = true
+  addrState.value = cachedAddr ? 'cached' : 'idle'
+  locHint.value = cachedAddr ? '已定位（上次位置），正在更新…' : '已定位（上次位置），正在更新并获取地址…'
+}
+
 async function refreshLocation() {
   if (locPending) return locPending
   locBusy.value = true
   locError.value = false
-  locHint.value = '定位中…'
-  addrState.value = 'idle'
+  // 有缓存坐标时先保留它显示，只把提示改成更新中；没坐标才显示“定位中…”
+  locHint.value = loc.value.lon != null ? '正在更新位置…' : '定位中…'
+  addrState.value = loc.value.address ? 'cached' : 'idle'
+  resetAddrRetryNow() // 重新定位同时重查地址：清掉重试退避
   locPending = (async () => {
     try {
-      const pos = await getPosition()
+      const pos = await getPosition((refined) => {
+        // 后台精修到了更准的坐标：更新界面；地址还没拿到或已移动超 500 米就重查地址。
+        const gcj = wgs84ToGcj02(refined.lon, refined.lat)
+        const better = loc.value.accuracy == null || (refined.accuracy != null && refined.accuracy < loc.value.accuracy)
+        if (!better && loc.value.lon != null) return
+        const prevAddr = loc.value.address
+        loc.value = { lon: refined.lon, lat: refined.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: prevAddr, accuracy: refined.accuracy }
+        locStale.value = false
+        const moved = !lastAddrCoords || distMeters(gcj.lon, gcj.lat, lastAddrCoords.lon, lastAddrCoords.lat) > 500
+        if ((!prevAddr || moved) && !addrFetching) {
+          addrFetching = true
+          resolveAddress(gcj.lon, gcj.lat).finally(() => { addrFetching = false })
+        }
+      })
       const gcj = wgs84ToGcj02(pos.lon, pos.lat)
-      loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: '' }
+      loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: loc.value.address, accuracy: pos.accuracy }
+      locStale.value = !!pos.stale
       if (pos.stale) {
         locHint.value = '已定位（上次位置，可能不准确），正在获取地址…'
       } else {
@@ -592,6 +753,7 @@ async function refreshLocation() {
       } else {
         locHint.value = '已定位，但地址未获取到（无网络或服务不可用），拍照时地址留空'
         locError.value = true
+        startAddrRetryLoop() // 地址没拿到：后台继续重试，拿到后补上
       }
     } catch (e) {
       locError.value = true
@@ -608,35 +770,28 @@ async function refreshLocation() {
   return locPending
 }
 
-// 拍照/录像前调用：定位正在进行就等它完成（最多等 8 秒），没定位过就先定位一次。
+// 拍照/录像前调用：有坐标就直接拍（哪怕是“上次位置”的缓存坐标，后台正在更新），
+// 不让用户等定位；完全没坐标时才等正在进行的定位，最多 5 秒。
 async function waitForLocation() {
+  if (loc.value.lon != null) return
   if (locPending) {
-    await Promise.race([locPending, new Promise((r) => setTimeout(r, 8000))])
+    await Promise.race([locPending, new Promise((r) => setTimeout(r, 5000))])
     return
   }
-  if (loc.value.lon == null) await refreshLocation()
+  await refreshLocation()
 }
 
-// 后台持续监听：GPS 热起来后自动补上经纬度；地址还是空、或已移动超过 500 米
-//（旧地址已不适用）时顺带补一次（30 秒内只补一次）。
+// 后台持续监听：GPS 热起来后自动补上经纬度；地址重试由独立的后台循环负责，
+// 这里只更新位置（室内静止不动时监听不触发，不靠它重试地址）。
 function startLocationWatch() {
   if (stopWatch) return
   stopWatch = watchPosition(async (pos) => {
     const gcj = wgs84ToGcj02(pos.lon, pos.lat)
-    const hadAddr = !!loc.value.address
-    loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: loc.value.address }
+    loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: loc.value.address, accuracy: pos.accuracy }
+    locStale.value = false
     if (locError.value) {
       locError.value = false
       locHint.value = loc.value.address ? '定位与地址已就绪' : '已定位，正在获取地址…'
-    }
-    const moved = !lastAddrCoords || distMeters(gcj.lon, gcj.lat, lastAddrCoords.lon, lastAddrCoords.lat) > 500
-    if ((!hadAddr || moved) && !addrFetching && Date.now() - lastAddrAt > 30000) {
-      addrFetching = true
-      lastAddrAt = Date.now()
-      try {
-        const addr = await resolveAddress(gcj.lon, gcj.lat)
-        if (addr) { locHint.value = '定位与地址已就绪' }
-      } catch { /* 下次监听到新位置再试 */ } finally { addrFetching = false }
     }
   })
 }
@@ -694,6 +849,7 @@ async function takePhoto() {
   if (!videoEl.value || !videoEl.value.videoWidth) { showToast('相机画面还没准备好'); return }
   await waitForLocation()
   const meta = currentMeta()
+  let flashLit = false
   try {
     const vw = videoEl.value.videoWidth, vh = videoEl.value.videoHeight
     // 按所选竖版比例对画面中心裁剪（默认 3:4），再按最长边 2400 缩放
@@ -701,8 +857,8 @@ async function takePhoto() {
     const { sx, sy, sw, sh } = centerCropRect(vw, vh, targetRatio)
     const k = Math.min(1, MAX_EDGE / Math.max(sw, sh))
     const w = Math.round(sw * k), h = Math.round(sh * k)
-    // 自动闪光灯：拍之前先按当前画面亮度补一次光
-    await applyAutoFlashOnce()
+    // 自动闪光灯：只在拍照这一刻按亮度决定，暗了开灯、等灯亮再拍，拍完马上关灯
+    flashLit = await flashForCapture()
     const rawCanvas = document.createElement('canvas')
     rawCanvas.width = w; rawCanvas.height = h
     rawCanvas.getContext('2d').drawImage(videoEl.value, sx, sy, sw, sh, 0, 0, w, h)
@@ -719,6 +875,8 @@ async function takePhoto() {
     await afterPhotoSaved({ rec })
   } catch (e) {
     showToast('拍照失败：' + (e && e.message ? e.message : e))
+  } finally {
+    if (flashLit) await setTorch(false)
   }
 }
 
@@ -772,6 +930,11 @@ async function startRecording() {
     await ensureVideoStream()
     await waitForLocation()
     recMeta = currentMeta()
+    // 自动模式：录像需要持续补光，开录时按亮度决定，停录时关灯
+    if (flashMode.value === 'auto' && torchSupported()) {
+      const luma = sampleBrightness()
+      if (luma != null && luma < 45) recFlashLit = await setTorch(true)
+    }
     recCanvas = document.createElement('canvas')
     recCanvas.width = 1080; recCanvas.height = 1920
     recCtx = recCanvas.getContext('2d')
@@ -813,8 +976,10 @@ function stopRecording() {
   recording.value = false
   clearInterval(recTimer)
   cancelAnimationFrame(recRaf)
+  if (recFlashLit) { setTorch(false).catch(() => {}); recFlashLit = false }
 }
 async function onRecordStop() {
+  if (recFlashLit) { recFlashLit = false; try { await setTorch(false) } catch { /* ignore */ } }
   try {
     const mime = (mediaRecorder && mediaRecorder.mimeType) || 'video/webm'
     const blob = new Blob(recChunks, { type: mime })
@@ -933,25 +1098,30 @@ let stageObserver = null
 onMounted(() => {
   clockTimer = setInterval(() => { nowText.value = formatTime() }, 1000)
   window.addEventListener('fw-settings-changed', refreshWmText)
+  window.addEventListener('online', onOnline)
   document.addEventListener('visibilitychange', onVisibilityChange)
   if (window.ResizeObserver && stageEl.value) {
     stageObserver = new ResizeObserver(() => fitStage())
     stageObserver.observe(stageEl.value)
   }
   fitStage()
+  attachPinch()
   startCamera()
+  showCachedFixImmediately() // 打开先显示上次缓存的坐标，再取新的
   refreshLocation()
   startLocationWatch()
-  startFlashTimer()
+  startAddrRetryLoop()
 })
 onBeforeUnmount(() => {
   clearBackOverlays() // 兜底：切 tab 卸载时清掉本页残留的弹层注册
   clearInterval(clockTimer)
   clearInterval(recTimer)
   cancelAnimationFrame(recRaf)
-  stopFlashTimer()
+  stopAddrRetry()
+  detachPinch()
   if (stageObserver) { stageObserver.disconnect(); stageObserver = null }
   window.removeEventListener('fw-settings-changed', refreshWmText)
+  window.removeEventListener('online', onOnline)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   if (stopWatch) { stopWatch(); stopWatch = null }
   stopStream()

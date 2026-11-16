@@ -7,6 +7,7 @@
  */
 import { Filesystem, Directory } from '@capacitor/filesystem'
 import { Capacitor } from '@capacitor/core'
+import { distMeters } from './geo.js'
 
 const LS_KEY = 'fw_records_v1'
 const LAST_PROJECT_KEY = 'fw_last_project'
@@ -31,6 +32,29 @@ export function loadRecords() {
 }
 export function saveRecords(list) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(list)) } catch { /* ignore */ }
+}
+
+/** 地址补填：地址后来才取到时，把同一地点（500 米内）且地址为空的已保存照片地址补上；
+ *  返回补了几条；补上了就发 fw-records-changed 事件，让作品页刷新（详情页的地址也会跟着变）。 */
+export function backfillRecordsAddress(lon, lat, address, radiusMeters = 500) {
+  if (!address) return 0
+  const list = loadRecords()
+  let changed = 0
+  for (const r of list) {
+    if (r.address) continue
+    const rLon = r.gcjLon != null ? r.gcjLon : r.lon
+    const rLat = r.gcjLat != null ? r.gcjLat : r.lat
+    if (rLon == null || rLat == null) continue
+    if (distMeters(lon, lat, rLon, rLat) <= radiusMeters) {
+      r.address = address
+      changed++
+    }
+  }
+  if (changed) {
+    saveRecords(list)
+    try { window.dispatchEvent(new Event('fw-records-changed')) } catch { /* 非浏览器环境 */ }
+  }
+  return changed
 }
 export function getLastProject() {
   try { return localStorage.getItem(LAST_PROJECT_KEY) || '' } catch { return '' }

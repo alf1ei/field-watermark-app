@@ -179,6 +179,11 @@ function refresh() {
   records.value = loadRecords()
   folders.value = getFolders()
   photoFolder.value = getPhotoFolderMap()
+  // 地址后来才拿到、回填了已保存的照片：如果详情正开着，跟着更新地址显示
+  if (detail.value) {
+    const fresh = records.value.find((r) => r.id === detail.value.id)
+    if (fresh) detail.value = fresh
+  }
 }
 
 function videoUrl(it) {
@@ -300,9 +305,12 @@ async function shareDetail() {
 
 onMounted(() => {
   refresh()
+  // 地址后来才拿到并回填了已保存的照片：刷新列表（详情正开着时地址也会跟着变）
+  window.addEventListener('fw-records-changed', refresh)
 })
 onBeforeUnmount(() => {
   clearBackOverlays() // 兜底：切 tab 卸载时清掉本页残留的弹层注册
+  window.removeEventListener('fw-records-changed', refresh)
 })
 defineExpose({ refresh })
 </script>
