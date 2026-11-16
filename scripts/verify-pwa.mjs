@@ -1,5 +1,5 @@
 /* PWA 检查：manifest、图标、SW、安装提示、录像兜底、构建产物。用法：npm run verify:pwa */
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v6 + skipWaiting', sw.includes('fw-pwa-v6') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v7 + skipWaiting', sw.includes('fw-pwa-v7') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,13 +67,13 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.1', pkg && pkg.version === '2.1.1')
+check('package.json 版本是 2.1.2', pkg && pkg.version === '2.1.2')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.1（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.1') && workflow.includes('长江现场水印相机 v2.1.1') && workflow.includes('长江现场水印相机-2.1.1-apk') && workflow.includes('长江现场水印相机v2.1.1.apk'))
+check('工作流已同步到 v2.1.2（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.2') && workflow.includes('长江现场水印相机 v2.1.2') && workflow.includes('长江现场水印相机-2.1.2-apk') && workflow.includes('长江现场水印相机v2.1.2.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -132,6 +132,18 @@ check('地址短格式 5 级（省+市+区县+街道/镇+道路/小区/派出所
 check('Nominatim 前先把 GCJ-02 转回 WGS-84（addressdetails=1）', geoJs.includes('gcj02ToWgs84') && geoJs.includes('addressdetails=1'))
 check('水印默认文字仍是 GSZD（不改名）', readFileSync(join(root, 'src/utils/store.js'), 'utf8').includes("'GSZD'"))
 
+// 安卓返回键（真机 2.1.1 的 bug：之前根本没接管返回键，弹层关不掉、主页面也退不出）。
+// 优先级：关最上层弹层 → 作品 tab 回拍摄 tab → 拍摄 tab 两次返回退出。
+check('返回键只在 App.vue 注册一次（backButton + isNativePlatform 守卫）', appVue.includes("App.addListener('backButton'") && appVue.includes('isNativePlatform()') && (appVue.match(/addListener\('backButton'/g) || []).length === 1)
+check('返回键先关弹层（popBackOverlay 在回 tab 之前）', appVue.includes('popBackOverlay()') && appVue.indexOf('popBackOverlay()') < appVue.indexOf("tab.value === 'works'"))
+check('作品 tab 按返回先回拍摄 tab', appVue.includes("tab.value === 'works'") && appVue.includes("tab.value = 'shoot'"))
+check('两次返回退出（2 秒内 + exitApp + 再按一次退出应用）', appVue.includes('App.exitApp()') && appVue.includes('2000') && appVue.includes('再按一次退出应用'))
+check('返回键监听在卸载时移除（backHandle.remove）', appVue.includes('backHandle.remove'))
+check('退出提示复用已有 toast 样式（不另起一套）', appVue.includes('class="toast"') && appVue.includes('showAppToast'))
+check('拍摄页四个弹层都注册进返回栈（比例/镜头/改名/预览）', cam.includes("trackOverlay('cam-ratio'") && cam.includes("trackOverlay('cam-lens'") && cam.includes("trackOverlay('cam-edit'") && cam.includes("trackOverlay('cam-preview'") && cam.includes('pushBackOverlay(id, close)'))
+check('作品页详情和新建文件夹注册进返回栈', works.includes("pushBackOverlay('works-detail'") && works.includes("pushBackOverlay('works-newfolder'"))
+check('切 tab 卸载时清掉残留弹层注册', cam.includes('clearBackOverlays()') && works.includes('clearBackOverlays()'))
+
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))
 check('dist/manifest.webmanifest 存在', existsSync(join(dist, 'manifest.webmanifest')))
@@ -142,6 +154,13 @@ check('dist/index.html 资源用相对路径', distHtml.includes('./assets/') &&
 check('dist/index.html 引用 manifest', distHtml.includes('manifest.webmanifest'))
 const distManifest = existsSync(join(dist, 'manifest.webmanifest')) ? readFileSync(join(dist, 'manifest.webmanifest'), 'utf8') : ''
 check('dist manifest 是新名', distManifest.includes('长江现场水印相机'))
+let distJsText = ''
+try {
+  for (const f of readdirSync(join(dist, 'assets'))) {
+    if (f.endsWith('.js')) distJsText += readFileSync(join(dist, 'assets', f), 'utf8')
+  }
+} catch { /* dist 还没构建时跳过 */ }
+check('dist 产物里有返回键处理和退出提示（backButton + 再按一次退出应用）', distJsText.includes('backButton') && distJsText.includes('再按一次退出应用'))
 
 console.log(`\n${pass} 通过，${fail} 失败`)
 process.exit(fail ? 1 : 0)

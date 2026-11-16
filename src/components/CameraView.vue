@@ -133,9 +133,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
+import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
 import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters } from '../utils/geo.js'
 import { drawWatermark, drawVideoFrame, burnPhotoWatermark, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
 import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, deleteAppFile } from '../utils/store.js'
@@ -210,7 +211,18 @@ let stopWatch = null
 let addrFetching = false
 let lastAddrAt = 0
 
-// 取景比例：拍照用所选竖版比例，录像固定竖屏 9:16
+// 返回键弹层栈：弹层开/关时注册/注销，App.vue 的 backButton 只读这个栈，
+// 按打开顺序倒着关（后打开的先关）。遮罩点击、✕ 按钮、保存等任何关法都会触发 watcher 注销。
+function trackOverlay(id, flagRef, close) {
+  watch(flagRef, (open) => {
+    if (open) pushBackOverlay(id, close)
+    else removeBackOverlay(id)
+  })
+}
+trackOverlay('cam-ratio', showRatioPanel, () => { showRatioPanel.value = false })
+trackOverlay('cam-lens', showLensPanel, () => { showLensPanel.value = false })
+trackOverlay('cam-edit', editSheet, () => { editSheet.value = false })
+trackOverlay('cam-preview', preview, () => { preview.value = null })
 const stageRatio = computed(() => {
   if (mode.value === 'video') return 9 / 16
   return (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
@@ -933,6 +945,7 @@ onMounted(() => {
   startFlashTimer()
 })
 onBeforeUnmount(() => {
+  clearBackOverlays() // 兜底：切 tab 卸载时清掉本页残留的弹层注册
   clearInterval(clockTimer)
   clearInterval(recTimer)
   cancelAnimationFrame(recRaf)

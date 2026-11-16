@@ -10,6 +10,7 @@
  */
 import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition } from '../src/utils/geo.js'
 import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
+import { pushBackOverlay, removeBackOverlay, popBackOverlay, backOverlayCount, clearBackOverlays } from '../src/utils/backstack.js'
 
 let pass = 0, fail = 0
 function check(name, ok, extra = '') {
@@ -146,6 +147,33 @@ console.log('7) 定位超时兜底 withTimeout / 上次定位 / 地址缓存')
   check('saveLastFix / saveCachedAddress 在无 localStorage 时不抛错', (() => { saveLastFix({ lon: 106.9, lat: 36.0 }); saveCachedAddress(106.9, 36.0, '测试地址'); return true })())
   check('isPermissionDenied 识别拒绝错误', isPermissionDenied(new Error('定位权限被拒绝')) && isPermissionDenied({ code: 1 }) && !isPermissionDenied(new Error('定位超时')))
   check('distMeters 同点为 0、1 度纬度约 111 公里', distMeters(106.9, 36.0, 106.9, 36.0) === 0 && distMeters(106.9, 36.0, 106.9, 37.0) > 100000 && distMeters(106.9, 36.0, 106.9, 37.0) < 120000)
+}
+
+// ---------- 8. 返回键弹层栈（LIFO：后打开的先关） ----------
+// 安卓返回键 bug（真机 2.1.1）：弹层关不掉、主页面也退不出。backstack 是纯 JS，Node 里直接测顺序。
+console.log('8) 返回键弹层栈 backstack（后打开先关）')
+{
+  clearBackOverlays()
+  check('空栈 pop 返回 false', popBackOverlay() === false && backOverlayCount() === 0)
+  const closed = []
+  pushBackOverlay('a', () => closed.push('a'))
+  pushBackOverlay('b', () => closed.push('b'))
+  pushBackOverlay('c', () => closed.push('c'))
+  check('push 三个后栈深为 3', backOverlayCount() === 3)
+  check('pop 先关最后打开的 c', popBackOverlay() === true && closed.join(',') === 'c' && backOverlayCount() === 2)
+  removeBackOverlay('a')
+  check('remove 能按 id 注销中间层', backOverlayCount() === 1)
+  check('pop 关掉剩下的 b', popBackOverlay() === true && closed.join(',') === 'c,b')
+  check('栈空后 pop 返回 false', popBackOverlay() === false)
+  pushBackOverlay('x', () => closed.push('x1'))
+  pushBackOverlay('x', () => closed.push('x2'))
+  check('同 id 重复 push 只保留最新一条', backOverlayCount() === 1)
+  popBackOverlay()
+  check('重复 push 后关掉的是最新注册的', closed[closed.length - 1] === 'x2')
+  pushBackOverlay('boom', () => { throw new Error('boom') })
+  check('close 里抛错时 pop 仍返回 true、不抛错', popBackOverlay() === true)
+  clearBackOverlays()
+  check('clear 清空栈', backOverlayCount() === 0)
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

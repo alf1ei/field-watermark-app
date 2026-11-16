@@ -114,9 +114,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory } from '@capacitor/filesystem'
+import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
 import {
   loadRecords, saveRecords, deleteAppFile, readAppFile, shareFile,
   getFolders, createFolder, deleteFolder, getPhotoFolderMap, getPhotoFolder, setPhotoFolder,
@@ -138,6 +139,16 @@ const newFolderName = ref('')
 const wmText = ref(getWatermarkText())
 const amapKey = ref(getAmapKey())
 const today = formatTime().slice(0, 10)
+
+// 返回键弹层栈：详情弹层和新建文件夹输入区开/关时注册/注销，App.vue 的 backButton 按打开顺序倒着关。
+watch(detail, (open) => {
+  if (open) pushBackOverlay('works-detail', () => { detail.value = null })
+  else removeBackOverlay('works-detail')
+})
+watch(showNewFolder, (open) => {
+  if (open) pushBackOverlay('works-newfolder', () => { showNewFolder.value = false })
+  else removeBackOverlay('works-newfolder')
+})
 
 let toastTimer = null
 function showToast(msg, ms = 3500) {
@@ -289,6 +300,9 @@ async function shareDetail() {
 
 onMounted(() => {
   refresh()
+})
+onBeforeUnmount(() => {
+  clearBackOverlays() // 兜底：切 tab 卸载时清掉本页残留的弹层注册
 })
 defineExpose({ refresh })
 </script>

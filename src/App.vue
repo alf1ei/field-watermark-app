@@ -22,11 +22,15 @@
         <span class="count-badge" v-if="count > 0">{{ count }}</span>
       </button>
     </nav>
+    <div v-if="appToast" class="toast">{{ appToast }}</div>
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { Capacitor } from '@capacitor/core'
+import { App } from '@capacitor/app'
+import { popBackOverlay } from './utils/backstack.js'
 import CameraView from './components/CameraView.vue'
 import WorksList from './components/WorksList.vue'
 import { loadRecords } from './utils/store.js'
@@ -35,6 +39,39 @@ const tab = ref('shoot')
 const worksRef = ref(null)
 const worksCount = ref(0)
 const count = ref(loadRecords().length)
+
+// App 级轻提示：复用已有的 .toast 样式（和拍摄页/作品页的 toast 同一套），
+// 只用于“再按一次退出应用”这类全局提示。
+const appToast = ref('')
+let appToastTimer = null
+function showAppToast(msg, ms = 2000) {
+  appToast.value = msg
+  clearTimeout(appToastTimer)
+  appToastTimer = setTimeout(() => (appToast.value = ''), ms)
+}
+
+// 安卓返回键：只在这里注册一次，按优先级处理——
+//  1. 有弹层开着：先关最上层（backstack 按打开顺序倒着关）；
+//  2. 在“作品”tab：先回“拍摄”tab（拍摄页 v-if 重新挂载，相机会重开）；
+//  3. 在“拍摄”tab 且什么都没开：第一次按提示“再按一次退出应用”，2 秒内再按一次才退出。
+// 网页版/PWA 没有系统返回键，不注册，别干扰浏览器自己的返回。
+const lastBackAt = ref(0)
+let backHandle = null
+function onBackButton() {
+  if (popBackOverlay()) return
+  if (tab.value === 'works') {
+    tab.value = 'shoot'
+    return
+  }
+  const now = Date.now()
+  if (now - lastBackAt.value < 2000) {
+    lastBackAt.value = 0
+    try { App.exitApp() } catch { /* iOS 上 exitApp 本来就是空操作 */ }
+    return
+  }
+  lastBackAt.value = now
+  showAppToast('再按一次退出应用')
+}
 
 // PWA 安装提示：iOS 手动添加到主屏幕；安卓用 beforeinstallprompt 弹安装按钮。只提示一次。
 const showA2hs = ref(false)
@@ -53,6 +90,10 @@ async function installPwa() {
   showA2hs.value = false
 }
 onMounted(() => {
+  // 安卓返回键只注册一次；网页版/PWA 没有系统返回键，不注册。
+  if (Capacitor.isNativePlatform()) {
+    try { backHandle = App.addListener('backButton', onBackButton) } catch { /* ignore */ }
+  }
   try { if (localStorage.getItem('fw_a2hs_dismissed')) return } catch { /* ignore */ }
   const ua = navigator.userAgent || ''
   const isIOS = /iPhone|iPad|iPod/.test(ua)
@@ -76,4 +117,9 @@ async function onSaved() {
   await nextTick()
   if (worksRef.value) worksRef.value.refresh()
 }
+
+onBeforeUnmount(() => {
+  try { if (backHandle && backHandle.remove) backHandle.remove() } catch { /* ignore */ }
+  clearTimeout(appToastTimer)
+})
 </script>
