@@ -97,8 +97,16 @@
       <label class="field-label">高德 Key（可选，用于更准的国内地址）</label>
       <input v-model="amapKey" @change="saveAmapKey" placeholder="没有可不填，将用 OpenStreetMap" />
       <div class="field-desc">地址格式：省＋市＋区县＋下一级（街道/镇）＋再详细一级（道路/小区/派出所/社区）。无网络时地址留空是正常的。</div>
+      <label class="field-label">隐私与协议</label>
+      <div class="field-row">
+        <button class="ghost" @click="policyDoc = 'privacy'">隐私政策</button>
+        <button class="ghost" @click="policyDoc = 'terms'">用户协议</button>
+      </div>
+      <div class="field-desc">本应用不注册、不登录，不收集账号信息；没有广告，没有第三方统计。照片、视频只保存在本机和系统相册。</div>
     </div>
   </div>
+
+  <PolicyViewer v-if="policyDoc" :doc="policyDoc" @close="policyDoc = null" />
 
   <div v-if="detail" class="modal-mask">
     <div class="view">
@@ -173,6 +181,7 @@ import {
 } from '../utils/store.js'
 import { toDMS, getAmapKey, setAmapKey, formatTime, normalizeTimeText } from '../utils/geo.js'
 import { burnPhotoWatermark } from '../utils/watermark.js'
+import PolicyViewer from './PolicyViewer.vue'
 
 const emit = defineEmits(['saved'])
 
@@ -189,6 +198,8 @@ const showNewFolder = ref(false)
 const newFolderName = ref('')
 const wmText = ref(getWatermarkText())
 const amapKey = ref(getAmapKey())
+// 隐私政策 / 用户协议全文查看（v2.1.8）：打开打包进 App 的本地副本，离线也能看
+const policyDoc = ref(null)
 const today = formatTime().slice(0, 10)
 const worksEl = ref(null)
 

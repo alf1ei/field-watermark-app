@@ -15,6 +15,22 @@ const HISTORY_KEY = 'fw_project_history'
 const WM_TEXT_KEY = 'fw_watermark_text'
 const FOLDERS_KEY = 'fw_folders_v1'
 const PHOTO_FOLDER_KEY = 'fw_photo_folder_v1'
+const CONSENT_KEY = 'fw_privacy_consent_v1'
+
+/**
+ * 隐私同意状态（v2.1.8，应用商店上架要求）：
+ *  - 'accepted'：用户点了“同意并继续”，可以启动相机和定位；
+ *  - 'declined'：用户点了“不同意”，不启动相机/定位，只能浏览相册；
+ *  - null：还没选过，首次启动要先弹同意页。
+ *  App.vue 只在 'accepted' 时才挂载 CameraView（CameraView 一挂载就开相机+定位），
+ *  所以不同意/未决定时相机和定位从头到尾都不会启动。
+ */
+export function getPrivacyConsent() {
+  try { return localStorage.getItem(CONSENT_KEY) } catch { return null }
+}
+export function setPrivacyConsent(state) {
+  try { localStorage.setItem(CONSENT_KEY, state) } catch { /* ignore */ }
+}
 
 /** 斜水印文字：默认 GSZD，用户可在设置里改；改后只影响新拍的照片/视频 */
 export function getWatermarkText() {

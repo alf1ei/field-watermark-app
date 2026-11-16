@@ -19,7 +19,7 @@
 
 ## 技术栈
 
-Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 2.1.7。
+Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 2.1.8。
 
 - 相机：App 内 `getUserMedia` 实时取景（可叠加实时水印预览，所见即所得）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。镜头面板列出手机全部摄像头，可切换、调变焦；读不到时自动重试、打开面板重读、也可手动重读，实在读不到时按前后方向切换。
 - 定位：`@capacitor/geolocation`，失败回退浏览器 Geolocation。
@@ -102,11 +102,58 @@ npx cap sync ios     # 需要 CocoaPods，会装 Capacitor 各插件的 Pod
 
 iOS 工程已就绪：Bundle ID `com.gszd.fieldwatermark`，显示名 `长江现场水印相机`，`Info.plist` 已写好相机/麦克风/定位/相册权限说明。
 
-## 上架应用商店（本次未做，需要用户准备）
+## 上架应用商店（v2.1.8 已做技术准备）
 
-- 苹果 App Store：苹果开发者账号（公司型 99 美元/年）、App Store Connect 上架、隐私政策链接。
-- 安卓各家（华为、小米、OPPO、vivo、应用宝等）：各家开发者账号 + 营业执照 + 软件著作权（部分商店要求）+ 隐私政策。
-- 本次交付的是可安装的 debug APK（可直接装到安卓手机上用）；上架用的 release 包需要签名（`keystore`，发布时生成，切勿丢失）+ 各商店要求的资料。
+> **上架主体（用户已定）：个人名义上架，不是公司。**隐私政策/用户协议里的开发者写个人开发者，软件著作权和备案的申请人也是用户个人，不要写甘肃中德检验检测公司。
+
+### 隐私合规（代码里已做）
+
+- **首次启动同意弹窗**：App 第一次启动先弹同意页，简述收集什么（照片/视频只存本机和系统相册、定位经纬度用于水印地址、联网只调高德逆地理接口查地址），附隐私政策和用户协议全文入口；点“同意并继续”后才启动相机和定位，点“不同意”不启动相机/定位，只能浏览相册；同意状态记在本地，以后启动不再弹，不同后想改主意可以在拍摄页点“阅读并同意”。
+- **隐私政策**：`public/privacy.html`（独立静态页），按 App 实际行为写：不注册不登录、不收集账号；照片/视频存在本机和系统相册；定位只用于水印，不上传到自己的服务器；联网只调高德逆地理编码（`restapi.amap.com`）和无 Key 时的 Nominatim；不含广告、不含第三方统计 SDK；用户可删除本机数据、撤回定位权限。
+- **用户协议**：`public/terms.html`，同上，独立静态页。
+- **App 内可看**：相册页设置卡有“隐私政策 / 用户协议”入口，打开的是打包进 App 的本地副本，离线也能看。
+- **商店要的在线链接**：`privacy.html` 需部署到一个能直接打开的 HTTPS 地址（例如 `https://您的域名/privacy.html`）再填进各商店后台；公司官网是凡科闭合平台，**不能**直接托管，见 `~/workspace/goals/by-ccj-field-photo-app/files/DEPLOY-PWA.md` 的外部托管方案。隐私政策里的联系邮箱已填 w4yne@foxmail.com。
+
+### Release 签名打包（工作流已改好）
+
+上架用的 release 包必须签名，签名信息从 GitHub Secrets 读，**不要把 keystore 或密码写进仓库**。
+
+**1. 生成 keystore（只做一次，妥善保管，丢了就再也更新不了已上架的 App）：**
+
+```bash
+keytool -genkeypair -v -keystore field-watermark-release.keystore \
+  -alias gszd -keyalg RSA -keysize 2048 -validity 9125
+# 按提示填密码、姓名等；-alias 建议就用 gszd；validity 9125 天 = 25 年
+```
+
+**2. 把 keystore 转成 base64（填 Secrets 用）：**
+
+```bash
+# macOS
+base64 -i field-watermark-release.keystore | tr -d '\n'
+# Linux
+base64 -w0 field-watermark-release.keystore
+```
+
+**3. 填仓库 Secrets（仓库 → Settings → Secrets and variables → Actions → New repository secret）：**
+
+| Secret 名 | 内容 |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | 上一步 base64 输出的整串 |
+| `KEYSTORE_PASSWORD` | 生成 keystore 时设的密码 |
+| `KEY_ALIAS` | `gszd`（和生成时 -alias 一致） |
+| `KEY_PASSWORD` | key 的密码（一般和 keystore 密码相同） |
+
+**工作流行为了如上**：`assembleDebug` 照常打（debug 包只进 artifact，供测试）；然后检查四个 Secrets，缺任何一个就**明确报错、整个构建失败，不悄悄回落到 debug 包**；齐全时打 `assembleRelease`，用 `apksigner` 签名并校验；Release 里只放签名后的 release 包（`长江现场水印相机v2.1.8.apk`）。另外工作流每次按 `major*10000+minor*100+patch` 自动算 `versionCode`（2.1.8 → 20108），商店更新要求 versionCode 递增，`cap add android` 每次都会把它重置成 1，不自动算就会被商店拒收更新。
+
+### 上架物料
+
+见 `docs/STORE-LISTING.md`：一句话简介、功能介绍、截图清单、各商店要填的字段清单（包名、版本、分类选工具/摄影、隐私政策链接占位）。
+
+### 各商店账号与资料（用户准备）
+
+- 华为、小米、OPPO、vivo、应用宝：各家开发者账号（个人名义实名）+ 软件著作权（申请人写用户个人）+ 隐私政策在线链接。
+- 苹果 App Store：本次不做（用户已决定不交 99 美元/年开发者费，见 LIMS/现场水印 App 的分发记录）。
 
 ## 已验证
 

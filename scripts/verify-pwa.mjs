@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v12 + skipWaiting', sw.includes('fw-pwa-v12') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v13 + skipWaiting', sw.includes('fw-pwa-v13') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,13 +67,13 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.7', pkg && pkg.version === '2.1.7')
+check('package.json 版本是 2.1.8', pkg && pkg.version === '2.1.8')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.7（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.7') && workflow.includes('长江现场水印相机 v2.1.7') && workflow.includes('长江现场水印相机-2.1.7-apk') && workflow.includes('长江现场水印相机v2.1.7.apk'))
+check('工作流已同步到 v2.1.8（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.8') && workflow.includes('长江现场水印相机 v2.1.8') && workflow.includes('长江现场水印相机-2.1.8-release-apk') && workflow.includes('长江现场水印相机v2.1.8.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -256,6 +256,33 @@ check('批量删除确认框（显示项数 + 说明系统相册那份删不掉�
 check('批量删除删 App 内文件 + 原图（path + origPath），清归属、刷新列表、退出多选', works.includes('doBatchDelete') && works.includes('deleteAppFile(rec.path)') && works.includes('deleteAppFile(rec.origPath)') && works.includes('exitSelectMode()'))
 check('批量删除确认框注册进返回栈（返回键先关确认框）', works.includes("pushBackOverlay('works-batch-delete'"))
 check('批量删除后相册 tab 角标跟着更新（emit saved + App.vue 接 @saved）', works.includes("defineEmits(['saved'])") && works.includes("emit('saved')") && appVue.includes('@saved="onSaved"'))
+
+// 7. v2.1.8 上架准备：首次同意弹窗、隐私政策/用户协议、release 签名打包
+const privacy = existsSync(join(root, 'public/privacy.html')) ? readFileSync(join(root, 'public/privacy.html'), 'utf8') : ''
+const terms = existsSync(join(root, 'public/terms.html')) ? readFileSync(join(root, 'public/terms.html'), 'utf8') : ''
+check('隐私政策存在，按实际行为写（高德/Nominatim/不收集账号/无广告/可删除）', privacy.includes('隐私政策') && privacy.includes('restapi.amap.com') && privacy.includes('Nominatim') && privacy.includes('不收集') && (privacy.includes('没有广告') || privacy.includes('不含广告')) && privacy.includes('删除'))
+check('隐私政策开发者写个人名义，不写公司', privacy.includes('个人开发者') && !privacy.includes('甘肃中德检验检测'))
+check('用户协议存在，开发者写个人名义，不写公司', terms.includes('用户协议') && terms.includes('个人开发者') && !terms.includes('甘肃中德检验检测'))
+check('store.js 有隐私同意状态读写（fw_privacy_consent_v1）', storeJs.includes('getPrivacyConsent') && storeJs.includes('setPrivacyConsent') && storeJs.includes('fw_privacy_consent_v1'))
+check('App.vue 只在同意后才挂载 CameraView（未同意/未决定不开相机+定位）', appVue.includes("v-if=\"consent === 'accepted'\"") && appVue.includes('getPrivacyConsent') && appVue.includes('PrivacyConsent'))
+check('App.vue 同意/不同意都记下来（setPrivacyConsent accepted/declined），下次不再弹', appVue.includes("setPrivacyConsent('accepted')") && appVue.includes("setPrivacyConsent('declined')") && appVue.includes('showConsent'))
+check('不同意后拍摄页有占位（阅读并同意 / 仅浏览相册），不是白屏', appVue.includes('consent-gate') && appVue.includes('仅浏览相册') && appVue.includes('阅读并同意'))
+const consentVue = existsSync(join(root, 'src/components/PrivacyConsent.vue')) ? readFileSync(join(root, 'src/components/PrivacyConsent.vue'), 'utf8') : ''
+check('首次同意弹窗存在：同意并继续 / 不同意 + 隐私政策/用户协议全文入口', consentVue.includes('同意并继续') && consentVue.includes('不同意') && consentVue.includes('隐私政策') && consentVue.includes('用户协议'))
+const viewerVue = existsSync(join(root, 'src/components/PolicyViewer.vue')) ? readFileSync(join(root, 'src/components/PolicyViewer.vue'), 'utf8') : ''
+check('政策全文查看器用 iframe 打开本地副本（离线可看），注册进返回栈', viewerVue.includes('iframe') && viewerVue.includes('privacy.html') && viewerVue.includes('terms.html') && viewerVue.includes('pushBackOverlay'))
+check('相册页设置卡有隐私政策/用户协议入口（PolicyViewer）', works.includes('隐私政策') && works.includes('用户协议') && works.includes('PolicyViewer'))
+check('SW 缓存包含隐私政策/用户协议页（PWA 离线可看）', sw.includes('privacy.html') && sw.includes('terms.html'))
+check('工作流能打 release 包（assembleRelease + apksigner 签名 + 校验）', workflow.includes('assembleRelease') && workflow.includes('apksigner') && workflow.includes('sign') && workflow.includes('verify'))
+check('签名信息从 Secrets 读（四个名都在），缺失明确报错不回落 debug', workflow.includes('ANDROID_KEYSTORE_BASE64') && workflow.includes('KEYSTORE_PASSWORD') && workflow.includes('KEY_ALIAS') && workflow.includes('KEY_PASSWORD') && workflow.includes('缺少 release 签名 Secrets') && workflow.includes('exit 1'))
+check('Release 只放签名后的 release 包（不是 debug 包）', workflow.includes('files: android/app/build/outputs/apk/release/长江现场水印相机v2.1.8.apk'))
+check('debug 构建保留（assembleDebug + debug artifact，供平时测试）', workflow.includes('assembleDebug') && workflow.includes('debug-apk'))
+check('versionCode 按 package.json 自动算（cap add 会重置成 1，不算会被商店拒收更新）', workflow.includes('versionCode') && workflow.includes('major * 10000') && workflow.includes('set-version'))
+const listing = existsSync(join(root, 'docs/STORE-LISTING.md')) ? readFileSync(join(root, 'docs/STORE-LISTING.md'), 'utf8') : ''
+check('上架物料草稿存在（简介/功能/截图清单/各商店字段，个人名义）', listing.includes('com.gszd.fieldwatermark') && listing.includes('截图清单') && listing.includes('个人名义') && listing.includes('隐私政策链接'))
+const readme = readFileSync(join(root, 'README.md'), 'utf8')
+check('README 上架章节有 keystore 生成命令 + Secrets 填法 + 个人名义', readme.includes('keytool -genkeypair') && readme.includes('ANDROID_KEYSTORE_BASE64') && readme.includes('个人名义'))
+check('dist 里有隐私政策/用户协议页（构建产物）', existsSync(join(dist, 'privacy.html')) && existsSync(join(dist, 'terms.html')))
 
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))

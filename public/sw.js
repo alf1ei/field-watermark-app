@@ -4,11 +4,13 @@
  * 跨域请求（高德/ Nominatim 逆地理编码）不拦截，直接走网络。
  * 更新机制：新 SW 安装后立即接管，页面监听到接管后自动刷新一次。
  */
-const CACHE = 'fw-pwa-v12'
+const CACHE = 'fw-pwa-v13'
 const CORE = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './privacy.html',
+  './terms.html',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'

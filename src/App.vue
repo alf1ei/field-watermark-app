@@ -12,7 +12,19 @@
            在相册列表上方）。相机从 App 启动就开着，只在退出 App 时才停；
            切 tab 时 CameraView.suspendCameraView() 收起弹层、关预览补光灯。 -->
       <div class="cam-page" v-show="tab === 'shoot'">
-        <CameraView ref="camRef" @saved="onSaved" />
+        <!-- v2.1.8 隐私同意门：只有用户点了“同意并继续”才挂载 CameraView；
+             CameraView 一挂载就开相机+定位，所以不同意/未决定时相机和定位都不会启动。
+             注意这里是按同意状态 v-if，不是按 tab 卸载——切 tab 仍走 v-show 常驻。 -->
+        <CameraView v-if="consent === 'accepted'" ref="camRef" @saved="onSaved" />
+        <div v-else class="consent-gate">
+          <h2>开始拍摄前，请先同意隐私政策</h2>
+          <p class="field-desc">拍摄需要相机和定位权限，同意后才会启动相机和定位。不同意也可以先看看相册。</p>
+          <button class="primary wide" @click="showConsent = true">阅读并同意</button>
+          <div style="height:8px"></div>
+          <button class="ghost wide" @click="tab = 'works'">仅浏览相册</button>
+          <div style="height:8px"></div>
+          <button class="ghost wide" @click="policyDoc = 'privacy'">查看隐私政策</button>
+        </div>
       </div>
       <WorksList v-if="tab === 'works'" ref="worksRef" @saved="onSaved" />
     </main>
@@ -26,6 +38,9 @@
       </button>
     </nav>
     <div v-if="appToast" class="toast">{{ appToast }}</div>
+    <!-- 首次启动隐私同意页：还没选过就弹；同意/不同意都记下来，下次不再弹 -->
+    <PrivacyConsent v-if="showConsent" @accept="onConsentAccept" @decline="onConsentDecline" />
+    <PolicyViewer v-if="policyDoc" :doc="policyDoc" @close="policyDoc = null" />
   </div>
 </template>
 
@@ -36,13 +51,31 @@ import { App } from '@capacitor/app'
 import { popBackOverlay } from './utils/backstack.js'
 import CameraView from './components/CameraView.vue'
 import WorksList from './components/WorksList.vue'
-import { loadRecords } from './utils/store.js'
+import PrivacyConsent from './components/PrivacyConsent.vue'
+import PolicyViewer from './components/PolicyViewer.vue'
+import { loadRecords, getPrivacyConsent, setPrivacyConsent } from './utils/store.js'
 
 const tab = ref('shoot')
 const camRef = ref(null)
 const worksRef = ref(null)
 const worksCount = ref(0)
 const count = ref(loadRecords().length)
+
+// 隐私同意状态（v2.1.8）：'accepted' | 'declined' | null（没选过）。
+// null 时首次启动弹同意页；declined 时拍摄页显示占位，不挂载 CameraView。
+const consent = ref(getPrivacyConsent())
+const showConsent = ref(consent.value == null)
+const policyDoc = ref(null)
+function onConsentAccept() {
+  setPrivacyConsent('accepted')
+  consent.value = 'accepted'
+  showConsent.value = false
+}
+function onConsentDecline() {
+  setPrivacyConsent('declined')
+  consent.value = 'declined'
+  showConsent.value = false
+}
 
 // 相机常驻后台（v2.1.5）：切 tab 不卸载 CameraView、不停流；
 // 切到相册时只收起拍摄页弹层、关预览补光灯，切回来只在流死了才重开（不卡）。

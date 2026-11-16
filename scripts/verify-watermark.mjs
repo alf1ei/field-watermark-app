@@ -11,7 +11,7 @@
 import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, normalizeTimeText, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition, reverseGeocode } from '../src/utils/geo.js'
 import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
 import { pushBackOverlay, removeBackOverlay, popBackOverlay, backOverlayCount, clearBackOverlays } from '../src/utils/backstack.js'
-import { backfillRecordsAddress, setPhotoFolder, getPhotoFolderMap, getPhotoFolder } from '../src/utils/store.js'
+import { backfillRecordsAddress, setPhotoFolder, getPhotoFolderMap, getPhotoFolder, getPrivacyConsent, setPrivacyConsent } from '../src/utils/store.js'
 
 let pass = 0, fail = 0
 function check(name, ok, extra = '') {
@@ -273,6 +273,32 @@ console.log('11) v2.1.6 水印 0.26/0.26 + normalizeTimeText')
   check('normalizeTimeText：缺秒补 00', normalizeTimeText('2026-11-16T10:20') === '2026-11-16 10:20:00')
   check('normalizeTimeText：不存在的日期拒绝（2 月 30 日）', normalizeTimeText('2026-02-30 10:00:00') === '')
   check('normalizeTimeText：乱填拒绝', normalizeTimeText('not-a-date') === '' && normalizeTimeText('') === '')
+}
+
+// ---------- 12. v2.1.8：隐私同意状态 ----------
+// 同意状态三种：null（没选过，首次启动弹同意页）、'accepted'（可开相机+定位）、
+// 'declined'（不开相机/定位，只能浏览相册）。无 localStorage 时不抛错、返回 null。
+console.log('12) v2.1.8 隐私同意状态 getPrivacyConsent/setPrivacyConsent')
+{
+  const origLocalStorage = globalThis.localStorage
+  const memStore = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => { memStore.set(k, String(v)) },
+    removeItem: (k) => { memStore.delete(k) }
+  }
+  try {
+    check('没选过时返回 null（首次启动要弹同意页）', getPrivacyConsent() === null)
+    setPrivacyConsent('accepted')
+    check('同意后读到 accepted', getPrivacyConsent() === 'accepted')
+    setPrivacyConsent('declined')
+    check('不同意后读到 declined', getPrivacyConsent() === 'declined')
+    check('同意状态存在 fw_privacy_consent_v1 这个 key 里', memStore.get('fw_privacy_consent_v1') === 'declined')
+  } finally {
+    if (origLocalStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = origLocalStorage
+  }
+  check('无 localStorage 时 getPrivacyConsent 返回 null 不抛错', getPrivacyConsent() === null)
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
