@@ -261,6 +261,7 @@ nav.tabs button.active {
 .sel-bar .sel-hint { flex: 1; font-size: 12px; font-weight: 400; color: #b9c9dc; }
 .sel-bar button { padding: 8px 14px; border-radius: 999px; font-size: 13px; font-weight: 700; }
 .sel-bar button.primary { border: none; background: linear-gradient(135deg, #2f8cff, #0a64d8); color: #fff; }
+.sel-bar button.danger { border: 1px solid rgba(255,59,48,.45); background: rgba(255,59,48,.16); color: #ff9d97; }
 /* 拖进文件夹：手指经过的文件夹高亮；拖动中的数量角标跟手指走 */
 .folder-card.drop-hot { border-color: rgba(47,140,255,.9); box-shadow: 0 0 0 3px rgba(47,140,255,.45), inset 0 1px 0 rgba(255,255,255,.08); }
 .drag-badge {
@@ -431,6 +432,12 @@ button.primary.wide {
   background: linear-gradient(135deg, #2f8cff, #0a64d8); color: #fff;
   font-size: 16px; font-weight: 700;
   box-shadow: 0 6px 20px rgba(47,140,255,.4), inset 0 1px 0 rgba(255,255,255,.3);
+}
+button.ghost.wide { width: 100%; padding: 14px; border-radius: 16px; font-size: 16px; }
+.sheet button.danger-wide {
+  width: 100%; padding: 14px; border-radius: 16px;
+  border: 1px solid rgba(255,59,48,.5); background: rgba(255,59,48,.2);
+  color: #ff9d97; font-size: 16px; font-weight: 700;
 }
 
 /* PWA 安装提示条（液态玻璃小横幅） */

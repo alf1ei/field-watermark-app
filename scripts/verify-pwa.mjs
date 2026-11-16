@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v11 + skipWaiting', sw.includes('fw-pwa-v11') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v12 + skipWaiting', sw.includes('fw-pwa-v12') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,13 +67,13 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.6', pkg && pkg.version === '2.1.6')
+check('package.json 版本是 2.1.7', pkg && pkg.version === '2.1.7')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.6（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.6') && workflow.includes('长江现场水印相机 v2.1.6') && workflow.includes('长江现场水印相机-2.1.6-apk') && workflow.includes('长江现场水印相机v2.1.6.apk'))
+check('工作流已同步到 v2.1.7（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.7') && workflow.includes('长江现场水印相机 v2.1.7') && workflow.includes('长江现场水印相机-2.1.7-apk') && workflow.includes('长江现场水印相机v2.1.7.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -232,6 +232,30 @@ check('取景器点按对焦（对焦框 + pointsOfInterest + focusMode，不支
 check('单指竖滑调曝光（exposureCompensation + 太阳指示，不支持给提示）', cam.includes('applyExposure') && cam.includes('exposureCompensation') && cam.includes('expIndicator') && cam.includes('当前摄像头不支持曝光调节') && css.includes('.exp-indicator'))
 check('曝光值对焦后保持（换位置对焦不重置；换镜头尽量恢复）', cam.includes('exposure.value = v') && cam.includes('if (exposure.value !== 0) applyExposure(exposure.value)'))
 check('点信息条/闪光灯/未启动面板不触发对焦（closest 守卫）', cam.includes("closest('.bar, .flash-btn, .cam-off')"))
+
+// 2.1.7 新增：镜头枚举不到（面板一直“正在枚举摄像头…”、选不了镜头、变焦跟着没反应）+ 相册批量删除。
+// 根因：listCameras 只在 startCamera 成功那一刻调一次、失败静默吞掉、再也不重试；
+// 变焦的 zoomBroken 锁死后捏合也不清掉。修法：拿不到带退避重试、打开面板重读、
+// 手动重新读取、拿不到时用当前轨合成前后切换、按 facingMode 切；变焦失败把上限收到
+// 上次成功的倍数、每新手势重读能力再试。
+check('镜头枚举拿不到时带退避重试（不是一次就判死刑）', cam.includes('camEnumAttempts') && cam.includes('camEnumTimer') && cam.includes('[600, 1500, 3000]'))
+check('打开镜头面板时重读摄像头列表（列表空时才重读，避免已有列表闪烁）', cam.includes('watch(showLensPanel') && cam.includes('if (open && !cameras.value.length) listCameras()'))
+check('镜头面板有手动重新读取入口 + 没读到时的明确提示（不是一直“正在枚举”）', cam.includes('重新读取') && cam.includes('listCameras(true)') && cam.includes('没读到摄像头') && cam.includes('camerasLoading'))
+check('枚举不到时用当前活着的视频轨合成前后切换（synthetic + 当前摄像头）', cam.includes('synthesizeCamerasFromTrack') && cam.includes('synthetic: true') && cam.includes('当前摄像头（'))
+check('没有 deviceId 时按前后方向切镜头（switchCameraByFacing + 清 deviceId）', cam.includes('switchCameraByFacing') && cam.includes("localStorage.removeItem('fw_camera_device')") && cam.includes('facing.value = f'))
+check('面板按 deviceId/前后方向两种方式切镜头（switchCamera 分流）', cam.includes('function switchCamera(c)') && cam.includes('switchCameraById(c.deviceId)') && cam.includes('switchCameraByFacing(c.facing)'))
+check('前后切换在合成条目上也走 facing（toggleFacing 处理空 deviceId）', cam.includes('if (next.deviceId)') && cam.includes('facing.value = next.facing'))
+check('镜头 label 为空时用前后方向/序号兜底', cam.includes('}摄像头 ${i + 1}') && cam.includes('当前摄像头（'))
+check('变焦失败把上限收到上次成功的倍数（真实上限比默认 1×–10× 小也不锁死）', cam.includes('max: zoomLastGood') && cam.includes('zoomCaps.value = null'))
+const pinchStartIdx = cam.indexOf('if (stagePointers.size === 2) {')
+check('捏合开始前重读变焦能力、清掉上次失败标记（不锁死到下次重启）', pinchStartIdx >= 0 && cam.indexOf('readTrackCaps()', pinchStartIdx) > pinchStartIdx && cam.indexOf('readTrackCaps()', pinchStartIdx) < cam.indexOf("stageGesture = { kind: 'pinch'", pinchStartIdx))
+check('变焦只作用在活着的视频轨上（readyState live 才调）', cam.includes("track.readyState !== 'live'"))
+check('变焦能力用轨的实际设置校准当前倍数（getSettings().zoom）', cam.includes('settings.zoom'))
+check('多选顶栏有删除入口（askBatchDelete）', works.includes('askBatchDelete') && works.includes('删除</button>'))
+check('批量删除确认框（显示项数 + 说明系统相册那份删不掉）', works.includes('batchDeleteAsk') && works.includes('确认删除') && works.includes('系统相册里的那份') && works.includes('手动'))
+check('批量删除删 App 内文件 + 原图（path + origPath），清归属、刷新列表、退出多选', works.includes('doBatchDelete') && works.includes('deleteAppFile(rec.path)') && works.includes('deleteAppFile(rec.origPath)') && works.includes('exitSelectMode()'))
+check('批量删除确认框注册进返回栈（返回键先关确认框）', works.includes("pushBackOverlay('works-batch-delete'"))
+check('批量删除后相册 tab 角标跟着更新（emit saved + App.vue 接 @saved）', works.includes("defineEmits(['saved'])") && works.includes("emit('saved')") && appVue.includes('@saved="onSaved"'))
 
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))

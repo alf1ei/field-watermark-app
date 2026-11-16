@@ -3,6 +3,7 @@
     <div v-if="selectMode" class="sel-bar">
       <span>已选 {{ selected.size }} 张</span>
       <span class="sel-hint">按住拖到文件夹上松手</span>
+      <button class="danger" @click="askBatchDelete">删除</button>
       <button class="ghost" @click="exitSelectMode">取消</button>
       <button class="primary" @click="exitSelectMode">完成</button>
     </div>
@@ -145,6 +146,19 @@
   </div>
 
   <div v-if="dragging" class="drag-badge" :style="{ left: dragging.x + 'px', top: dragging.y + 'px' }">📁 {{ dragging.n }} 张</div>
+
+  <!-- 批量删除确认：多选模式里删选中的照片/视频，删前确认并说明系统相册那份删不掉 -->
+  <div v-if="batchDeleteAsk" class="modal-mask" @click.self="batchDeleteAsk = false">
+    <div class="sheet panel-sheet">
+      <div class="sheet-head"><h2>删除选中的内容？</h2><button class="sheet-close" @click="batchDeleteAsk = false">✕</button></div>
+      <div class="field-desc">将删除 App 内的 {{ selected.size }} 项（含照片原图），删除后无法恢复。</div>
+      <div class="field-desc danger-text">注意：系统相册里的那份 App 删不掉，请去系统相册里手动删除。</div>
+      <div style="height:8px"></div>
+      <button class="danger-wide" :disabled="batchDeleting" @click="doBatchDelete">{{ batchDeleting ? '删除中…' : `确认删除 ${selected.size} 项` }}</button>
+      <div style="height:8px"></div>
+      <button class="ghost wide" @click="batchDeleteAsk = false">取消</button>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -159,6 +173,8 @@ import {
 } from '../utils/store.js'
 import { toDMS, getAmapKey, setAmapKey, formatTime, normalizeTimeText } from '../utils/geo.js'
 import { burnPhotoWatermark } from '../utils/watermark.js'
+
+const emit = defineEmits(['saved'])
 
 const records = ref([])
 const detail = ref(null)
@@ -412,6 +428,45 @@ function moveSelectedToFolder(folderId) {
   refresh()
   showToast(`已将 ${n} 张移入「${folder.name}」`)
 }
+
+// ---- 批量删除（多选模式）----
+// 顶栏“删除”按钮 → 确认框（显示项数 + 说明系统相册那份删不掉）→ 确认后把选中的
+// 照片/视频连同原图一起从 App 内删掉，列表刷新、退出多选。
+// 系统相册里的那份没有按文件删除的接口，App 删不掉，确认框和提示里都写清楚。
+const batchDeleteAsk = ref(false)
+const batchDeleting = ref(false)
+function askBatchDelete() {
+  if (!selected.value.size) return
+  batchDeleteAsk.value = true
+}
+async function doBatchDelete() {
+  if (batchDeleting.value) return
+  const ids = [...selected.value]
+  if (!ids.length) { batchDeleteAsk.value = false; return }
+  batchDeleting.value = true
+  try {
+    const list = loadRecords()
+    const targets = list.filter((r) => ids.includes(r.id))
+    for (const rec of targets) {
+      await deleteAppFile(rec.path)
+      if (rec.origPath) await deleteAppFile(rec.origPath)
+      setPhotoFolder(rec.id, '')
+    }
+    records.value = list.filter((r) => !ids.includes(r.id))
+    saveRecords(records.value)
+    batchDeleteAsk.value = false
+    exitSelectMode()
+    emit('saved') // 相册 tab 角标跟着更新
+    refresh()
+    showToast(`已删除 ${ids.length} 项（App 内），系统相册里的请手动删`)
+  } finally {
+    batchDeleting.value = false
+  }
+}
+watch(batchDeleteAsk, (open) => {
+  if (open) pushBackOverlay('works-batch-delete', () => { batchDeleteAsk.value = false })
+  else removeBackOverlay('works-batch-delete')
+})
 function onCellClick(it) {
   if (suppressCellClick) { suppressCellClick = false; return }
   if (selectMode.value) { toggleSelect(it.id); return }
@@ -525,6 +580,7 @@ async function deleteDetail() {
   saveRecords(records.value)
   detail.value = null
   refresh()
+  emit('saved') // 相册 tab 角标跟着更新
   showToast('已删除')
 }
 

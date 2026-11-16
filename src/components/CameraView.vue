@@ -93,12 +93,16 @@
       <div class="pick-row" v-if="zoomOptions.length">
         <button v-for="z in zoomOptions" :key="z" :class="{ active: zoom === z }" @click="applyZoom(z)">{{ formatZoom(z) }}</button>
       </div>
-      <div class="field-desc" v-else>当前摄像头不支持网页变焦（iPhone 网页版通常没有变焦能力）。</div>
+      <div class="field-desc" v-else>当前摄像头不支持网页变焦（这台手机没开放变焦能力，可在上方切换镜头，或用系统相机）。</div>
       <div class="field-label">摄像头（读取手机能提供的全部摄像头）</div>
       <div class="pick-col" v-if="cameras.length">
-        <button v-for="c in cameras" :key="c.deviceId" :class="{ active: cameraId === c.deviceId }" @click="switchCameraById(c.deviceId)">{{ c.label }}</button>
+        <button v-for="c in cameras" :key="c.deviceId || ('face-' + c.facing)" :class="{ active: isCameraActive(c) }" @click="switchCamera(c)">{{ c.label }}</button>
       </div>
-      <div class="field-desc" v-else>正在枚举摄像头…</div>
+      <div class="field-desc" v-else-if="camerasLoading">正在读取摄像头…</div>
+      <div v-else>
+        <div class="field-desc">没读到摄像头（这台手机暂时没把摄像头列表交给网页）。</div>
+        <button class="ghost" @click="listCameras(true)">重新读取</button>
+      </div>
       <div class="field-desc">iPhone 网页版只给前/后两个摄像头，长焦/超广角苹果不开放给网页，想用长焦请用“系统相机”。</div>
     </div>
   </div>
@@ -172,7 +176,11 @@ function migrateRatio(stored) {
 const ratio = ref(migrateRatio(localStorage.getItem('fw_photo_ratio') || ''))
 // 镜头：枚举到的摄像头（手机上常有主摄/超广角/长焦，浏览器能看到几个就列几个）
 const cameras = ref([])
+const camerasLoading = ref(false) // 正在枚举摄像头（面板据此区分“读取中”和“没读到”）
 const cameraId = ref(localStorage.getItem('fw_camera_device') || '')
+let camEnumTimer = null // 枚举不到时的重试定时器
+let camEnumAttempts = 0 // 本轮已重试次数（手动“重新读取”清零）
+let camEnumRunning = false // 正在枚举（防重复调用；重试等待期间也算在内）
 // 变焦：从当前视频轨的能力里读（0.5×–10× 按手机实际支持的过滤）
 const zoom = ref(1)
 const zoomCaps = ref(null)
@@ -374,32 +382,109 @@ async function startCamera() {
   camError.value = '无法打开相机：' + cameraErrorText(lastErr) + '。请检查相机权限，或用下方系统相机。'
 }
 // 枚举摄像头：浏览器能看到几个就列几个（安卓常有主摄/超广角/长焦；
-// iPhone 网页只给前后两个，长焦/超广角苹果不开放给网页，见下方说明）
-async function listCameras() {
+// iPhone 网页只给前后两个，长焦/超广角苹果不开放给网页，见下方说明）。
+// 真机 2.1.6：面板一直显示“正在枚举摄像头…”，镜头选不了、变焦也跟着没反应。
+// 根因：listCameras 只在 startCamera 成功那一刻调一次、失败静默吞掉、再也不重试——
+// 安卓 WebView 里设备列表/标签要在相机权限彻底落定后才出来，那一刻调可能正好拿到空列表，
+// 之后整个会话就再也没镜头可选。修法：拿不到就带退避重试、打开面板时重读、
+// 面板里给手动“重新读取”；label/deviceId 为空时用当前轨的 facingMode/序号兜底；
+// 实在一个都拿不到时，用当前活着的视频轨合成“当前摄像头 + 反方向”两个条目，
+// 保证面板里永远能前后切换（按 facingMode 切，不依赖 deviceId）。
+async function listCameras(force = false) {
+  if (!force && camEnumRunning) return
+  if (force) { camEnumAttempts = 0; clearTimeout(camEnumTimer); camEnumTimer = null }
+  camEnumRunning = true
+  camerasLoading.value = true
+  let retryPending = false
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return
-    const devices = await navigator.mediaDevices.enumerateDevices()
-    const inputs = devices.filter((d) => d.kind === 'videoinput')
-    if (!inputs.length) return
-    cameras.value = inputs.map((d, i) => {
-      const label = (d.label || '').trim()
-      const low = label.toLowerCase()
-      let face = 'environment'
-      if (low.includes('front') || label.includes('前置')) face = 'user'
-      else if (low.includes('back') || low.includes('rear') || label.includes('后置')) face = 'environment'
-      else face = i === 0 ? 'environment' : 'user'
-      return { deviceId: d.deviceId, label: label || `摄像头 ${i + 1}`, facing: face }
-    })
-    // 已存的镜头还在列表里就沿用；否则按当前这路的 deviceId 认领
-    if (!cameras.value.some((c) => c.deviceId === cameraId.value)) {
-      const track = stream.value && stream.value.getVideoTracks()[0]
-      const settings = track && track.getSettings ? track.getSettings() : {}
-      const current = settings.deviceId && cameras.value.find((c) => c.deviceId === settings.deviceId)
-      if (current) cameraId.value = current.deviceId
-      else if (cameras.value.length === 1) cameraId.value = cameras.value[0].deviceId
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      synthesizeCamerasFromTrack()
+    } else {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter((d) => d.kind === 'videoinput')
+      if (!inputs.length && camEnumAttempts < 3) {
+        // 空列表：权限/标签还没落定很常见，等一会儿再试几次，不要一次就判死刑
+        camEnumAttempts++
+        const delay = [600, 1500, 3000][camEnumAttempts - 1] || 3000
+        clearTimeout(camEnumTimer)
+        camEnumTimer = setTimeout(() => { camEnumRunning = false; listCameras() }, delay)
+        retryPending = true
+      } else if (!inputs.length) {
+        synthesizeCamerasFromTrack()
+      } else {
+        camEnumAttempts = 0
+        cameras.value = inputs.map((d, i) => {
+          const label = (d.label || '').trim()
+          const low = label.toLowerCase()
+          let face = 'environment'
+          if (low.includes('front') || label.includes('前置')) face = 'user'
+          else if (low.includes('back') || low.includes('rear') || label.includes('后置')) face = 'environment'
+          else face = i === 0 ? 'environment' : 'user'
+          return { deviceId: d.deviceId || '', label: label || `${face === 'user' ? '前置' : '后置'}摄像头 ${i + 1}`, facing: face, synthetic: false }
+        })
+        adoptCurrentCamera()
+      }
     }
-  } catch { /* 枚举失败不影响拍摄 */ }
+  } catch {
+    // 枚举抛错：也不要让面板一直卡在“读取中”，用当前轨合成兜底
+    synthesizeCamerasFromTrack()
+  } finally {
+    camEnumRunning = retryPending
+    if (!retryPending) camerasLoading.value = false
+  }
 }
+// 按当前活着的视频轨认领正在用的镜头：deviceId 对得上就用它；对不上时按 facingMode 认。
+function adoptCurrentCamera() {
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  const settings = track && track.getSettings ? track.getSettings() : {}
+  if (cameraId.value && cameras.value.some((c) => c.deviceId === cameraId.value)) return
+  if (settings.deviceId) {
+    const hit = cameras.value.find((c) => c.deviceId === settings.deviceId)
+    if (hit) { cameraId.value = hit.deviceId; return }
+  }
+  if (settings.facingMode) {
+    const hit = cameras.value.find((c) => c.facing === settings.facingMode)
+    if (hit && hit.deviceId) cameraId.value = hit.deviceId
+    else if (hit) facing.value = hit.facing
+    return
+  }
+  if (cameras.value.length === 1 && cameras.value[0].deviceId) cameraId.value = cameras.value[0].deviceId
+}
+// 一个摄像头都枚举不到时的兜底：用当前活着的视频轨合成“当前摄像头 + 反方向”，
+// 保证面板里永远能前后切换（按 facingMode 切，不依赖 deviceId）。
+function synthesizeCamerasFromTrack() {
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (!track) { cameras.value = []; return }
+  const settings = track.getSettings ? track.getSettings() : {}
+  const face = settings.facingMode || facing.value || 'environment'
+  const other = face === 'user' ? 'environment' : 'user'
+  const faceName = (f) => (f === 'user' ? '前置' : '后置')
+  cameras.value = [
+    { deviceId: settings.deviceId || '', label: `当前摄像头（${faceName(face)}）`, facing: face, synthetic: true },
+    { deviceId: '', label: `切换到${faceName(other)}摄像头`, facing: other, synthetic: true }
+  ]
+}
+function isCameraActive(c) {
+  if (c.deviceId) return cameraId.value === c.deviceId
+  return facing.value === c.facing
+}
+// 面板里点一个摄像头：有 deviceId 按 deviceId 切；没有（合成条目）按前后方向切。
+function switchCamera(c) {
+  if (!c) return
+  if (c.deviceId) return switchCameraById(c.deviceId)
+  return switchCameraByFacing(c.facing)
+}
+// 没有可用 deviceId 时按前后方向切镜头（清掉存的 deviceId，约束里只用 facingMode）。
+async function switchCameraByFacing(f) {
+  cameraId.value = ''
+  try { localStorage.removeItem('fw_camera_device') } catch { /* ignore */ }
+  facing.value = f
+  zoom.value = 1
+  showLensPanel.value = false
+  await startCamera()
+}
+// 打开镜头面板时重读一次摄像头列表（启动时那次可能正好拿到空列表，面板里要能补上）。
+watch(showLensPanel, (open) => { if (open && !cameras.value.length) listCameras() })
 function setRatio(label) {
   ratio.value = label
   try { localStorage.setItem('fw_photo_ratio', label) } catch {}
@@ -434,6 +519,14 @@ function readTrackCaps() {
       ? { min: caps.exposureCompensation.min, max: caps.exposureCompensation.max, step: caps.exposureCompensation.step || 0.1 }
       : null
     track._torchSupported = !!caps.torch
+    // 用轨的实际设置校准当前倍数（换镜头后 getSettings().zoom 就是这路的真实倍数）
+    try {
+      const settings = track.getSettings ? track.getSettings() : {}
+      if (typeof settings.zoom === 'number' && Number.isFinite(settings.zoom)) {
+        zoom.value = settings.zoom
+        zoomLastGood = settings.zoom
+      }
+    } catch { /* ignore */ }
   } catch { zoomCaps.value = null; expCaps.value = null }
 }
 async function applyZoom(z) {
@@ -453,12 +546,19 @@ let zoomLastGood = 1
 async function tryApplyZoom(z) {
   if (zoomBroken) return false
   const track = stream.value && stream.value.getVideoTracks()[0]
-  if (!track) return false
+  if (!track || track.readyState !== 'live') return false
   try {
     await track.applyConstraints({ advanced: [{ zoom: z }] })
     zoomLastGood = z
     return true
   } catch {
+    // 失败：真实上限可能比默认的 1×–10× 小（这台手机不报 zoom 能力），
+    // 把上限收到上次成功的倍数，同一手势里不再反复试；下个新手势重读能力再试。
+    // 连最小倍数之上都调不动时，说明这路根本不支持变焦，caps 清掉，面板显示“不支持变焦”。
+    if (zoomCaps.value) {
+      if (zoomLastGood > zoomCaps.value.min) zoomCaps.value = { ...zoomCaps.value, max: zoomLastGood }
+      else zoomCaps.value = null
+    }
     zoomBroken = true
     zoom.value = zoomLastGood
     showToast('当前摄像头不支持变焦')
@@ -596,7 +696,10 @@ function onStagePointerDown(e) {
   stagePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
   try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
   if (stagePointers.size === 2) {
-    // 第二指按下：转捏合缩放；之前那根手指的点按/曝光状态作废
+    // 第二指按下：转捏合缩放；之前那根手指的点按/曝光状态作废。
+    // 捏合开始前重读一次变焦能力（之前读失败/没读到时这里补上），并清掉上次的
+    // 变焦失败标记——否则一次失败就把捏合锁死到下次重启相机（真机 2.1.6 的坑）。
+    readTrackCaps()
     const pts = [...stagePointers.values()]
     stageGesture = { kind: 'pinch', startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), startZoom: zoom.value, lastApplied: zoom.value }
     return
@@ -814,8 +917,14 @@ async function toggleFacing() {
     const current = cameras.value.findIndex((c) => c.deviceId === cameraId.value)
     const cur = cameras.value[current >= 0 ? current : 0]
     const next = cameras.value.find((c) => c.facing !== cur.facing) || cameras.value[(current + 1) % cameras.value.length]
-    cameraId.value = next.deviceId
-    try { localStorage.setItem('fw_camera_device', next.deviceId) } catch {}
+    if (next.deviceId) {
+      cameraId.value = next.deviceId
+      try { localStorage.setItem('fw_camera_device', next.deviceId) } catch {}
+    } else {
+      // 合成条目没有 deviceId：按前后方向切，清掉存的 deviceId
+      cameraId.value = ''
+      try { localStorage.removeItem('fw_camera_device') } catch {}
+    }
     facing.value = next.facing
   } else {
     facing.value = facing.value === 'environment' ? 'user' : 'environment'
@@ -1397,6 +1506,7 @@ onBeforeUnmount(() => {
   clearInterval(recTimer)
   cancelAnimationFrame(recRaf)
   stopAddrRetry()
+  clearTimeout(camEnumTimer)
   if (stageObserver) { stageObserver.disconnect(); stageObserver = null }
   window.removeEventListener('fw-settings-changed', refreshWmText)
   window.removeEventListener('online', onOnline)

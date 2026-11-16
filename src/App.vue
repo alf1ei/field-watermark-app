@@ -14,7 +14,7 @@
       <div class="cam-page" v-show="tab === 'shoot'">
         <CameraView ref="camRef" @saved="onSaved" />
       </div>
-      <WorksList v-if="tab === 'works'" ref="worksRef" />
+      <WorksList v-if="tab === 'works'" ref="worksRef" @saved="onSaved" />
     </main>
     <nav class="tabs">
       <button :class="{ active: tab === 'shoot' }" @click="tab = 'shoot'">
