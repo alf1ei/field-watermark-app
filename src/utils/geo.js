@@ -80,6 +80,99 @@ export function formatTime(date = new Date()) {
 // ---- 定位 ----
 // 策略（2026-11-16 用户反馈：个别手机一次高精度定位拿不到）：
 // 高精度 → 普通精度（Wi-Fi/基站）→ 缓存位置，三级兜底，不只试一次就放弃。
+// 关键：原生端 Capacitor 的 getCurrentPosition 不保证执行 timeout（
+// 安卓上 timeout 只用作 watch 的更新间隔），室内等不到 GPS 时会永远挂起；
+// 所以每一级都包一层手动超时（Promise.race），绝不无限等。
+
+// 通用超时包装：promise 在 ms 内没结果就拒绝（code 为 'TIMEOUT'）。
+// 超时后底层请求若稍后才成功，其结果会被丢弃（调用方负责关掉多余的流/监听）。
+export function withTimeout(promise, ms, label) {
+  let timer = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error((label || '操作') + '超时')
+      err.code = 'TIMEOUT'
+      reject(err)
+    }, ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer) })
+}
+
+export function isPermissionDenied(e) {
+  if (!e) return false
+  if (e.code === 'LOC_DENIED' || e.code === 1) return true
+  const msg = String((e && e.message) || e)
+  return /denied|permission|权限被拒绝|PERMISSION_DENIED/i.test(msg)
+}
+
+// 上次定位（localStorage）：全部尝试都失败时兜底用，界面会明确标“上次位置”。
+const LAST_FIX_KEY = 'fw_last_loc'
+export function saveLastFix(pos) {
+  try {
+    if (pos && pos.lon != null && pos.lat != null) {
+      localStorage.setItem(LAST_FIX_KEY, JSON.stringify({ lon: pos.lon, lat: pos.lat, accuracy: pos.accuracy || null, at: Date.now() }))
+    }
+  } catch { /* ignore */ }
+}
+export function loadLastFix() {
+  try {
+    const raw = localStorage.getItem(LAST_FIX_KEY)
+    if (!raw) return null
+    const f = JSON.parse(raw)
+    if (!f || f.lon == null || f.lat == null) return null
+    return f
+  } catch { return null }
+}
+
+// 两点间距离（米，Haversine 公式）
+export function distMeters(lon1, lat1, lon2, lat2) {
+  const R = 6371000
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLon = ((lon2 - lon1) * Math.PI) / 180
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(a))
+}
+
+// 地址缓存（localStorage）：同一地点 500 米内的上次地址先显示，新的回来再替换。
+const LAST_ADDR_KEY = 'fw_last_addr'
+export function getCachedAddress(gcjLon, gcjLat) {
+  try {
+    const raw = localStorage.getItem(LAST_ADDR_KEY)
+    if (!raw) return ''
+    const c = JSON.parse(raw)
+    if (!c || !c.address || c.lon == null || c.lat == null) return ''
+    return distMeters(gcjLon, gcjLat, c.lon, c.lat) <= 500 ? c.address : ''
+  } catch { return '' }
+}
+export function saveCachedAddress(gcjLon, gcjLat, address) {
+  try {
+    if (!address) return
+    localStorage.setItem(LAST_ADDR_KEY, JSON.stringify({ lon: gcjLon, lat: gcjLat, address, at: Date.now() }))
+  } catch { /* ignore */ }
+}
+
+// 显式要定位权限：原生端没授权时会弹系统授权框；已拒绝返回 denied，
+// 直接报清楚（不再往下试）；网页端 requestPermissions 未实现会抛错，直接忽略继续试。
+// 权限框是用户点按的，最多等 30 秒，超时也不阻塞后续定位尝试。
+async function ensureLocationPermission() {
+  let Geolocation
+  try {
+    ({ Geolocation } = await import('@capacitor/geolocation'))
+  } catch { return }
+  if (!Geolocation || typeof Geolocation.requestPermissions !== 'function') return
+  let status = null
+  try {
+    status = await withTimeout(Geolocation.requestPermissions(), 30000, '请求定位权限')
+  } catch { return }
+  const locState = status && status.location
+  const coarseState = status && status.coarseLocation
+  if (locState === 'denied' && coarseState !== 'granted') {
+    const err = new Error('定位权限被拒绝')
+    err.code = 'LOC_DENIED'
+    throw err
+  }
+}
+
 function capacitorPosition(opts) {
   return import('@capacitor/geolocation').then(({ Geolocation }) =>
     Geolocation.getCurrentPosition(opts).then((pos) => ({
@@ -97,40 +190,59 @@ function browserPosition(opts) {
     )
   })
 }
-async function tryPosition(opts) {
+// 单级定位：先走 Capacitor（真机原生定位），包一层手动超时；
+// 原生端超时不回退浏览器（同个 provider 也会卡），交给下一级兜底；
+// Capacitor 快速失败时回退浏览器 API（网页版走的就是它）。
+async function tryPosition(opts, ms) {
   try {
-    return await capacitorPosition(opts)
-  } catch { /* 真机失败时回退浏览器 API */ }
-  return await browserPosition(opts)
+    return await withTimeout(capacitorPosition(opts), ms, '定位')
+  } catch (e) {
+    if (e && e.code === 'TIMEOUT') throw e
+    if (isPermissionDenied(e)) throw e
+    return await withTimeout(browserPosition(opts), ms, '定位')
+  }
 }
 
 export async function getPosition() {
+  // 权限被拒直接抛 LOC_DENIED（不再试，也不用缓存兜底——用户明确拒绝了定位）
+  await ensureLocationPermission()
   const attempts = [
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 },
-    { enableHighAccuracy: false, timeout: 15000, maximumAge: 5000 },
-    { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000 }
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000, ms: 12000 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 5000, ms: 12000 },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 600000, ms: 8000 }
   ]
   let lastErr = null
-  for (const opts of attempts) {
+  for (const a of attempts) {
+    const { ms, ...opts } = a
     try {
-      return await tryPosition(opts)
+      const pos = await tryPosition(opts, ms)
+      saveLastFix(pos)
+      return pos
     } catch (e) {
+      if (isPermissionDenied(e)) throw e
       lastErr = e
     }
   }
+  // 全部失败：用上次定位兜底（带 stale 标记，界面会标“上次位置”），再没有才报错
+  const stale = loadLastFix()
+  if (stale) return { lon: stale.lon, lat: stale.lat, accuracy: stale.accuracy, source: 'cached', stale: true }
   throw lastErr || new Error('定位失败')
 }
 
 // 后台持续监听：GPS 热起来后自动补上经纬度/地址。返回停止函数。
-// 优先 Capacitor watchPosition（真机/网页都可用），起不来才回退浏览器监听，避免两路重复回调。
+// 优先 Capacitor watchPosition（真机/网页都可用）；原生监听 20 秒还不出位置
+//（如室内 GPS 迟迟不定）时，再开一路浏览器监听补网络定位；原生监听报错时也一样。
 export function watchPosition(onUpdate, onError) {
   const opts = { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
-  const emit = (lon, lat, accuracy, source) => {
-    try { onUpdate({ lon, lat, accuracy, source }) } catch { /* 回调异常不中断监听 */ }
-  }
   let stopped = false
+  let gotFix = false
   let stopCap = null
   let watchId = null
+  let watchdog = null
+  const emit = (lon, lat, accuracy, source) => {
+    gotFix = true
+    try { onUpdate({ lon, lat, accuracy, source }) } catch { /* 回调异常不中断监听 */ }
+  }
   const startBrowserWatch = () => {
     if (stopped || !navigator.geolocation || watchId != null) return
     watchId = navigator.geolocation.watchPosition(
@@ -142,12 +254,18 @@ export function watchPosition(onUpdate, onError) {
   import('@capacitor/geolocation').then(({ Geolocation }) =>
     Geolocation.watchPosition(opts, (pos, err) => {
       if (stopped) return
-      if (err) { if (onError) onError(err); return }
+      if (err) {
+        startBrowserWatch()
+        if (onError) onError(err)
+        return
+      }
       if (pos) emit(pos.coords.longitude, pos.coords.latitude, pos.coords.accuracy, 'capacitor')
     }).then((id) => { stopCap = id }).catch(startBrowserWatch)
   ).catch(startBrowserWatch)
+  watchdog = setTimeout(() => { if (!stopped && !gotFix) startBrowserWatch() }, 20000)
   return () => {
     stopped = true
+    if (watchdog) clearTimeout(watchdog)
     if (watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(watchId)
     if (stopCap != null) {
       import('@capacitor/geolocation').then(({ Geolocation }) => Geolocation.clearWatch({ id: stopCap })).catch(() => {})

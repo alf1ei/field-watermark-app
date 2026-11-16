@@ -6,7 +6,11 @@
       <button class="a2hs-close" @click="dismissA2hs">✕</button>
     </div>
     <main>
-      <CameraView v-show="tab === 'shoot'" @saved="onSaved" />
+      <!-- 注意：CameraView 是多根节点组件（project-bar/stage/hint/controls/弹窗），
+           v-show 只会作用到第一个根节点、其余根节点藏不住（真机 2.1.0 的 bug：
+           切到“作品”后拍摄 UI 仍显示在作品列表上方），所以必须用 v-if 整体挂载/卸载；
+           卸载时 onBeforeUnmount 会停掉相机流、定位监听和定时器。 -->
+      <CameraView v-if="tab === 'shoot'" @saved="onSaved" />
       <WorksList v-if="tab === 'works'" ref="worksRef" />
     </main>
     <nav class="tabs">

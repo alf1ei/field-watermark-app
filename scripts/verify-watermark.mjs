@@ -8,7 +8,7 @@
  * 注意：Node 里没有真实 Canvas，本脚本验证的是绘制指令；真实像素渲染需在浏览器/WebView 里看，
  * 另见 README 的真机验证清单。带 --render 时若装了 node-canvas 会额外出一张真实水印样图。
  */
-import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime } from '../src/utils/geo.js'
+import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition } from '../src/utils/geo.js'
 import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
 
 let pass = 0, fail = 0
@@ -112,6 +112,41 @@ const dLat2 = (back.lat - 39.9093) * 110540
 check('往返换算误差 < 2 米', Math.hypot(dLon2, dLat2) < 2, `误差约 ${Math.hypot(dLon2, dLat2).toFixed(2)} 米`)
 const backOutside = gcj02ToWgs84(-73.9857, 40.7484)
 check('境外坐标逆变换不变', backOutside.lon === -73.9857 && backOutside.lat === 40.7484)
+
+// ---------- 7. 定位超时兜底（手动超时 + 上次定位 + 地址缓存） ----------
+// 原生端 Capacitor 的 getCurrentPosition 不保证执行 timeout，室内等不到 GPS 会永远挂起；
+// 每一级定位/地址查询都必须包手动超时，绝不无限等。
+console.log('7) 定位超时兜底 withTimeout / 上次定位 / 地址缓存')
+{
+  const t0 = Date.now()
+  const v = await withTimeout(Promise.resolve(42), 1000, '快')
+  check('withTimeout 快速 promise 原值返回', v === 42)
+  let timedOut = false
+  let codeOk = false
+  try {
+    await withTimeout(new Promise(() => {}), 50, '永不结束')
+  } catch (e) {
+    timedOut = true
+    codeOk = e && e.code === 'TIMEOUT'
+  }
+  const elapsed = Date.now() - t0
+  check('withTimeout 永不结束的 promise 会超时拒绝（code=TIMEOUT）', timedOut && codeOk, `elapsed=${elapsed}ms`)
+  check('withTimeout 超时在合理时间内（< 2 秒）', elapsed < 2000, `elapsed=${elapsed}ms`)
+  // getPosition 在 Node 里没有定位能力，应快速拒绝而不是无限挂起
+  const g0 = Date.now()
+  let threw = false
+  try {
+    await getPosition()
+  } catch { threw = true }
+  const gElapsed = Date.now() - g0
+  check('getPosition 无定位环境时快速失败不挂起', threw && gElapsed < 8000, `elapsed=${gElapsed}ms`)
+  // 上次定位 / 地址缓存的读写在无 localStorage 时不抛错
+  check('无 localStorage 时 loadLastFix 返回 null 不抛错', loadLastFix() === null)
+  check('无 localStorage 时 getCachedAddress 返回空串不抛错', getCachedAddress(106.9359, 36.0559) === '')
+  check('saveLastFix / saveCachedAddress 在无 localStorage 时不抛错', (() => { saveLastFix({ lon: 106.9, lat: 36.0 }); saveCachedAddress(106.9, 36.0, '测试地址'); return true })())
+  check('isPermissionDenied 识别拒绝错误', isPermissionDenied(new Error('定位权限被拒绝')) && isPermissionDenied({ code: 1 }) && !isPermissionDenied(new Error('定位超时')))
+  check('distMeters 同点为 0、1 度纬度约 111 公里', distMeters(106.9, 36.0, 106.9, 36.0) === 0 && distMeters(106.9, 36.0, 106.9, 37.0) > 100000 && distMeters(106.9, 36.0, 106.9, 37.0) < 120000)
+}
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)
 if (fail) process.exit(1)

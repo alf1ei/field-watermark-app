@@ -13,7 +13,10 @@ body {
 button { font-family: inherit; transition: transform .18s cubic-bezier(.32,.72,.35,1), background .18s, box-shadow .18s, border-color .18s; }
 button:active { transform: scale(.96); }
 input, select { font-family: inherit; }
-.app { display: flex; flex-direction: column; height: 100dvh; }
+/* Capacitor WebView 全屏沉浸式：没有浏览器顶栏，内容从屏幕最顶上开始；
+   顶部留出状态栏 + 挖孔安全区（env 取不到时至少留 32px，
+   保证项目名称栏不撞状态栏时间和前置摄像头）；底部导航已用 safe-area-inset-bottom */
+.app { display: flex; flex-direction: column; height: 100dvh; padding-top: max(env(safe-area-inset-top, 0px), 32px); }
 
 main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 

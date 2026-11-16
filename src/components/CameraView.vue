@@ -59,7 +59,7 @@
     </div>
     <div class="loc-line" @click="openProjectEdit" title="点一下改项目名称">
       <span v-if="recording" class="rec-time">● {{ recTimeText }}</span>
-      <span v-else>{{ loc.address ? '地址：' + loc.address : (loc.lon != null ? '已定位，地址获取中/未获取到' : '正在定位…') }}</span>
+      <span v-else>{{ locLineText }}</span>
     </div>
     <div class="tool-row">
       <button @click="refreshLocation" :disabled="locBusy">📍 重新定位</button>
@@ -136,7 +136,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
-import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime } from '../utils/geo.js'
+import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters } from '../utils/geo.js'
 import { drawWatermark, drawVideoFrame, burnPhotoWatermark, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
 import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, deleteAppFile } from '../utils/store.js'
 
@@ -189,6 +189,10 @@ const loc = ref({ lon: null, lat: null, gcjLon: null, gcjLat: null, address: '' 
 const locBusy = ref(false)
 const locError = ref(false)
 const locHint = ref('正在定位…')
+// 地址状态：idle | fetching（联网取地址中）| cached（显示的是缓存地址）| ok | failed（取不到）
+// 定位行据此区分“获取中”和“已失败”：失败后直接显示经纬度、地址留空，不一直卡在“获取中”。
+const addrState = ref('idle')
+let lastAddrCoords = null // { lon, lat }：当前显示地址所对应的 GCJ-02 坐标，移动超 500 米才重新取地址
 const nowText = ref(formatTime())
 
 let toastTimer = null
@@ -237,6 +241,18 @@ const recTimeText = computed(() => {
   const s = String(recSeconds.value % 60).padStart(2, '0')
   return `${m}:${s}`
 })
+// 定位行：有地址显示地址；没地址但有经纬度时，获取中显示“获取中”，
+// 失败后直接显示经纬度、地址留空，不一直卡在“获取中/未获取到”。
+const locLineText = computed(() => {
+  if (loc.value.address) return '地址：' + loc.value.address
+  if (loc.value.lon != null) {
+    if (addrState.value === 'fetching') return '已定位，地址获取中…'
+    const lon = (loc.value.gcjLon != null ? loc.value.gcjLon : loc.value.lon).toFixed(4)
+    const lat = (loc.value.gcjLat != null ? loc.value.gcjLat : loc.value.lat).toFixed(4)
+    return `已定位 ${lon}, ${lat}（地址未获取到）`
+  }
+  return '正在定位…'
+})
 
 function showToast(msg, ms = 3500) {
   toast.value = msg
@@ -248,38 +264,86 @@ function onProjectInput() {
   history.value = getProjectHistory()
 }
 
+// 打开相机：约束从严到宽逐级降级（OverconstrainedError 常见于存的 deviceId 失效、
+// 或某镜头不支持指定分辨率），每级最多等 8 秒，绝不无限等；
+// 降级成功后把失效的 deviceId 清掉，下次不再重复撞同一面墙。
+// 注意：getUserMedia 约束里只放宽高（ideal）和前后方向/deviceId，
+// zoom、对焦等能力一律在流起来之后用 track.applyConstraints 应用。
+function buildCameraLevels() {
+  const audio = mode.value === 'video'
+  const res = { width: { ideal: 1920 }, height: { ideal: 1080 } }
+  const levels = []
+  if (cameraId.value) {
+    // 第 1 级：指定镜头（deviceId exact）+ 理想分辨率
+    levels.push({ constraints: { video: { ...res, deviceId: { exact: cameraId.value } }, audio }, clearDeviceId: true })
+    // 第 2 级：去掉 deviceId，改用前后方向 + 理想分辨率
+    levels.push({ constraints: { video: { ...res, facingMode: facing.value }, audio }, clearDeviceId: true })
+  } else {
+    levels.push({ constraints: { video: { ...res, facingMode: facing.value }, audio }, clearDeviceId: false })
+  }
+  // 第 3 级：只留前后方向，不指定分辨率
+  levels.push({ constraints: { video: { facingMode: facing.value }, audio }, clearDeviceId: true })
+  // 第 4 级：任意摄像头
+  levels.push({ constraints: { video: true, audio }, clearDeviceId: true })
+  return levels
+}
+// getUserMedia 加手动超时：超时/失败后若底层请求稍后才成功，立刻关掉那路流，别让它占着摄像头。
+async function openStream(constraints, ms) {
+  const p = navigator.mediaDevices.getUserMedia(constraints) // 同步抛错时直接向上抛，无残留流
+  try {
+    return await withTimeout(p, ms, '打开相机')
+  } catch (e) {
+    p.then((stray) => stray.getTracks().forEach((t) => t.stop())).catch(() => {})
+    throw e
+  }
+}
+function cameraErrorText(e) {
+  const name = (e && e.name) || ''
+  if (name === 'NotAllowedError' || name === 'SecurityError') return '相机权限被拒绝，请在系统设置里给长江现场水印相机开相机权限'
+  if (name === 'NotFoundError') return '没找到可用摄像头'
+  if (name === 'NotReadableError' || name === 'AbortError') return '摄像头正被其他应用占用，稍后再试'
+  if (e && e.code === 'TIMEOUT') return '打开相机超时（摄像头可能被其他应用占用），请重试'
+  if (name === 'OverconstrainedError') return '该镜头打不开（OverconstrainedError），已试过放宽约束仍失败'
+  return (e && e.message) || String(e || '未知错误')
+}
 async function startCamera() {
   stopStream()
   camError.value = ''
-  try {
-    const videoConstraints = {
-      width: { ideal: 1920 },
-      height: { ideal: 1080 }
+  const levels = buildCameraLevels()
+  let lastErr = null
+  for (let i = 0; i < levels.length; i++) {
+    const level = levels[i]
+    try {
+      const s = await openStream(level.constraints, 8000)
+      stream.value = s
+      videoEl.value.srcObject = s
+      try { await withTimeout(videoEl.value.play(), 5000, '播放取景') } catch { /* 播不起来也不阻塞，画面稍后自己起 */ }
+      camOk.value = true
+      listCameras()
+      readTrackCaps()
+      // 换镜头后变焦会回到 1×，之前选过的倍数尽量恢复；新镜头不支持就回到 1×
+      if (zoom.value !== 1 && zoomCaps.value) {
+        const track = s.getVideoTracks()[0]
+        if (track) {
+          try { await track.applyConstraints({ advanced: [{ zoom: zoom.value }] }) }
+          catch { zoom.value = 1 }
+        }
+      }
+      applyAutoFlashOnce()
+      if (level.clearDeviceId && cameraId.value) {
+        cameraId.value = ''
+        try { localStorage.removeItem('fw_camera_device') } catch { /* ignore */ }
+      }
+      if (i > 0) showToast('指定镜头打不开，已自动用其他摄像头')
+      return
+    } catch (e) {
+      lastErr = e
+      // 权限被拒没必要继续降级，直接报错
+      if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) break
     }
-    // 选了具体镜头就按 deviceId 开（长焦/超广角就靠这个）；没选才按前后方向开
-    if (cameraId.value) videoConstraints.deviceId = { exact: cameraId.value }
-    else videoConstraints.facingMode = facing.value
-    const constraints = {
-      video: videoConstraints,
-      audio: mode.value === 'video'
-    }
-    const s = await navigator.mediaDevices.getUserMedia(constraints)
-    stream.value = s
-    videoEl.value.srcObject = s
-    await videoEl.value.play().catch(() => {})
-    camOk.value = true
-    listCameras()
-    readTrackCaps()
-    // 换镜头后变焦会回到 1×，之前选过的倍数尽量恢复
-    if (zoom.value !== 1 && zoomCaps.value) {
-      const track = s.getVideoTracks()[0]
-      if (track) track.applyConstraints({ advanced: [{ zoom: zoom.value }] }).catch(() => {})
-    }
-    applyAutoFlashOnce()
-  } catch (e) {
-    camOk.value = false
-    camError.value = '无法打开相机：' + (e && e.message ? e.message : e) + '。请检查相机权限，或用下方系统相机。'
   }
+  camOk.value = false
+  camError.value = '无法打开相机：' + cameraErrorText(lastErr) + '。请检查相机权限，或用下方系统相机。'
 }
 // 枚举摄像头：浏览器能看到几个就列几个（安卓常有主摄/超广角/长焦；
 // iPhone 网页只给前后两个，长焦/超广角苹果不开放给网页，见下方说明）
@@ -335,12 +399,15 @@ function readTrackCaps() {
   } catch { zoomCaps.value = null }
 }
 async function applyZoom(z) {
+  const prev = zoom.value
   zoom.value = z
   const track = stream.value && stream.value.getVideoTracks()[0]
-  if (!track) return
+  if (!track) { zoom.value = prev; return }
   try {
     await track.applyConstraints({ advanced: [{ zoom: z }] })
   } catch (e) {
+    // 变焦失败不把流搞崩：倍数回到之前的值，界面不显示一个实际没生效的倍数
+    zoom.value = prev
     showToast('变焦失败：' + (e && e.message ? e.message : e))
     readTrackCaps()
   }
@@ -454,29 +521,73 @@ async function toggleFacing() {
   await startCamera()
 }
 
+// 系统相机/相册选图回来后（App 曾切到后台），直播流可能已被系统断掉；
+// 回到前台时检查一次，流断了就重开，避免取景画面冻住。
+async function resumeCameraIfNeeded() {
+  if (recording.value || !camOk.value) return
+  const track = stream.value && stream.value.getVideoTracks()[0]
+  if (track && track.readyState === 'live' && videoEl.value && !videoEl.value.paused) return
+  await startCamera()
+}
+function onVisibilityChange() {
+  if (!document.hidden) resumeCameraIfNeeded()
+}
+
+// 取地址：先用同一地点 500 米内的缓存地址顶上，再联网取新的；整体最多等 12 秒，
+// 超时/失败就保留缓存（或留空），绝不一直卡在“获取中”。
+async function resolveAddress(gcjLon, gcjLat) {
+  const cached = getCachedAddress(gcjLon, gcjLat)
+  loc.value.address = cached || ''
+  addrState.value = cached ? 'cached' : 'fetching'
+  try {
+    const addr = await withTimeout(reverseGeocode(gcjLon, gcjLat), 12000, '获取地址')
+    if (addr) {
+      loc.value.address = addr
+      addrState.value = 'ok'
+      lastAddrCoords = { lon: gcjLon, lat: gcjLat }
+      saveCachedAddress(gcjLon, gcjLat, addr)
+      return addr
+    }
+  } catch { /* 超时/失败：留空或保留缓存 */ }
+  if (loc.value.address) {
+    lastAddrCoords = { lon: gcjLon, lat: gcjLat }
+    addrState.value = 'cached'
+  } else {
+    addrState.value = 'failed'
+  }
+  return loc.value.address || ''
+}
+
 async function refreshLocation() {
   if (locPending) return locPending
   locBusy.value = true
   locError.value = false
   locHint.value = '定位中…'
+  addrState.value = 'idle'
   locPending = (async () => {
     try {
       const pos = await getPosition()
       const gcj = wgs84ToGcj02(pos.lon, pos.lat)
-      loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: loc.value.address }
-      locHint.value = `已定位（精度约 ${pos.accuracy ? Math.round(pos.accuracy) + ' 米' : '未知'}），正在获取地址…`
-      try {
-        const addr = await reverseGeocode(gcj.lon, gcj.lat)
-        loc.value.address = addr || ''
-        locHint.value = addr ? '定位与地址已就绪' : '已定位，但地址未获取到（无网络或服务不可用），拍照时地址留空'
-        if (!addr) locError.value = true
-      } catch {
-        locHint.value = '已定位，但地址未获取到，拍照时地址留空'
+      loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: '' }
+      if (pos.stale) {
+        locHint.value = '已定位（上次位置，可能不准确），正在获取地址…'
+      } else {
+        locHint.value = `已定位（精度约 ${pos.accuracy ? Math.round(pos.accuracy) + ' 米' : '未知'}），正在获取地址…`
+      }
+      const addr = await resolveAddress(gcj.lon, gcj.lat)
+      if (addr) {
+        locHint.value = addrState.value === 'cached' ? '定位已就绪，地址为缓存地址' : '定位与地址已就绪'
+      } else {
+        locHint.value = '已定位，但地址未获取到（无网络或服务不可用），拍照时地址留空'
         locError.value = true
       }
     } catch (e) {
       locError.value = true
-      locHint.value = '定位失败：' + (e && e.message ? e.message : e) + '。请打开定位权限；无定位时仍可拍照，经纬度/地址留空。'
+      if (e && (e.code === 'LOC_DENIED' || /权限被拒绝/.test(e.message || ''))) {
+        locHint.value = '定位权限被拒绝：请在系统设置里给长江现场水印相机开启定位权限，开启后点“重新定位”重试；无定位时仍可拍照，经纬度/地址留空。'
+      } else {
+        locHint.value = '定位失败：' + (e && e.message ? e.message : e) + '。请打开定位权限；无定位时仍可拍照，经纬度/地址留空。'
+      }
     } finally {
       locBusy.value = false
       locPending = null
@@ -494,20 +605,25 @@ async function waitForLocation() {
   if (loc.value.lon == null) await refreshLocation()
 }
 
-// 后台持续监听：GPS 热起来后自动补上经纬度；地址还是空时顺带补一次（30 秒内只补一次）。
+// 后台持续监听：GPS 热起来后自动补上经纬度；地址还是空、或已移动超过 500 米
+//（旧地址已不适用）时顺带补一次（30 秒内只补一次）。
 function startLocationWatch() {
   if (stopWatch) return
   stopWatch = watchPosition(async (pos) => {
     const gcj = wgs84ToGcj02(pos.lon, pos.lat)
     const hadAddr = !!loc.value.address
     loc.value = { lon: pos.lon, lat: pos.lat, gcjLon: gcj.lon, gcjLat: gcj.lat, address: loc.value.address }
-    if (locError.value) { locError.value = false; locHint.value = '定位与地址已就绪' }
-    if (!hadAddr && !addrFetching && Date.now() - lastAddrAt > 30000) {
+    if (locError.value) {
+      locError.value = false
+      locHint.value = loc.value.address ? '定位与地址已就绪' : '已定位，正在获取地址…'
+    }
+    const moved = !lastAddrCoords || distMeters(gcj.lon, gcj.lat, lastAddrCoords.lon, lastAddrCoords.lat) > 500
+    if ((!hadAddr || moved) && !addrFetching && Date.now() - lastAddrAt > 30000) {
       addrFetching = true
       lastAddrAt = Date.now()
       try {
-        const addr = await reverseGeocode(gcj.lon, gcj.lat)
-        if (addr) { loc.value.address = addr; locHint.value = '定位与地址已就绪' }
+        const addr = await resolveAddress(gcj.lon, gcj.lat)
+        if (addr) { locHint.value = '定位与地址已就绪' }
       } catch { /* 下次监听到新位置再试 */ } finally { addrFetching = false }
     }
   })
@@ -628,6 +744,9 @@ async function systemCamera(source) {
   } catch (e) {
     if (String(e && e.message).includes('cancel')) return
     showToast('系统相机失败：' + (e && e.message ? e.message : e))
+  } finally {
+    // 从系统相机/相册回来后直播流可能已被系统断掉，检查一次，断了就重开
+    await resumeCameraIfNeeded()
   }
 }
 
@@ -802,6 +921,7 @@ let stageObserver = null
 onMounted(() => {
   clockTimer = setInterval(() => { nowText.value = formatTime() }, 1000)
   window.addEventListener('fw-settings-changed', refreshWmText)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   if (window.ResizeObserver && stageEl.value) {
     stageObserver = new ResizeObserver(() => fitStage())
     stageObserver.observe(stageEl.value)
@@ -819,6 +939,7 @@ onBeforeUnmount(() => {
   stopFlashTimer()
   if (stageObserver) { stageObserver.disconnect(); stageObserver = null }
   window.removeEventListener('fw-settings-changed', refreshWmText)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   if (stopWatch) { stopWatch(); stopWatch = null }
   stopStream()
 })
