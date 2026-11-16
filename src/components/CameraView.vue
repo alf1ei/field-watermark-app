@@ -23,8 +23,9 @@
     </div>
     <button v-if="camOk" class="flash-btn" @click="cycleFlashMode" title="闪光灯：点一下切换 自动/常开/关闭">闪光灯·{{ flashLabel }}</button>
     <div v-if="!camOk" class="cam-off">
-      <div>{{ camError || '相机未启动' }}</div>
-      <div>
+      <div v-if="camStarting" class="cam-starting"><span class="cam-spinner"></span>正在启动相机…</div>
+      <div v-else>{{ camError || '相机未启动' }}</div>
+      <div v-if="!camStarting">
         <button class="primary" @click="startCamera" style="padding:10px 18px;border-radius:8px;border:none;background:#0b3d91;color:#fff;font-size:15px;">重试打开相机</button>
       </div>
       <div style="font-size:13px;">浏览器/真机上也可直接用系统相机拍照，水印同样会烧进去：</div>
@@ -181,6 +182,7 @@ const editProject = ref('')
 const editInput = ref(null)
 const camOk = ref(false)
 const camError = ref('')
+const camStarting = ref(false)
 const stream = ref(null)
 const recording = ref(false)
 const recSeconds = ref(0)
@@ -327,6 +329,7 @@ function cameraErrorText(e) {
 async function startCamera() {
   stopStream()
   camError.value = ''
+  camStarting.value = true
   const levels = buildCameraLevels()
   let lastErr = null
   for (let i = 0; i < levels.length; i++) {
@@ -335,8 +338,10 @@ async function startCamera() {
       const s = await openStream(level.constraints, 8000)
       stream.value = s
       videoEl.value.srcObject = s
-      try { await withTimeout(videoEl.value.play(), 5000, '播放取景') } catch { /* 播不起来也不阻塞，画面稍后自己起 */ }
+      // 流一拿到就亮取景，不等 play() 回来（play 慢会拖几秒才出画面）
       camOk.value = true
+      camStarting.value = false
+      try { await withTimeout(videoEl.value.play(), 5000, '播放取景') } catch { /* 播不起来也不阻塞，画面稍后自己起 */ }
       listCameras()
       readTrackCaps()
       // 换镜头后变焦会回到 1×，之前选过的倍数尽量恢复；新镜头不支持就回到 1×
@@ -361,6 +366,7 @@ async function startCamera() {
     }
   }
   camOk.value = false
+  camStarting.value = false
   camError.value = '无法打开相机：' + cameraErrorText(lastErr) + '。请检查相机权限，或用下方系统相机。'
 }
 // 枚举摄像头：浏览器能看到几个就列几个（安卓常有主摄/超广角/长焦；

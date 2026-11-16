@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v8 + skipWaiting', sw.includes('fw-pwa-v8') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v9 + skipWaiting', sw.includes('fw-pwa-v9') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,13 +67,13 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 2.1.3', pkg && pkg.version === '2.1.3')
+check('package.json 版本是 2.1.4', pkg && pkg.version === '2.1.4')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
 check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId === 'com.gszd.fieldwatermark')
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
-check('工作流已同步到 v2.1.3（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.3') && workflow.includes('长江现场水印相机 v2.1.3') && workflow.includes('长江现场水印相机-2.1.3-apk') && workflow.includes('长江现场水印相机v2.1.3.apk'))
+check('工作流已同步到 v2.1.4（tag/Release/artifact/改名）', workflow.includes('tag_name: v2.1.4') && workflow.includes('长江现场水印相机 v2.1.4') && workflow.includes('长江现场水印相机-2.1.4-apk') && workflow.includes('长江现场水印相机v2.1.4.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -150,6 +150,17 @@ check('回填后作品页自动刷新（fw-records-changed）', storeJs.includes
 check('双指捏合变焦：两指距离映射到 zoom（夹到设备范围，标签同步）', cam.includes('onPinchStart') && cam.includes('onPinchMove') && cam.includes('pinchDist') && cam.includes('Math.min(caps.max, Math.max(caps.min, z))') && cam.includes('zoom.value = z') && cam.includes('applyConstraints({ advanced: [{ zoom: z }] })'))
 check('捏合只处理双指、阻止浏览器滚动/缩放（touch-action: none）', css.includes('touch-action: none') && cam.includes('e.touches.length !== 2') && cam.includes('passive: false'))
 check('捏合监听在挂载时装上、卸载时拆掉', cam.includes('attachPinch()') && cam.includes('detachPinch()'))
+// 2.1.4 新增：从作品切回拍摄时，相机重开那一瞬间会闪一下“相机未启动”（假报错）。
+// 根因：模板里 {{ camError || '相机未启动' }} 在 camOk=false 且 camError='' 时就显示这句，
+// 而 startCamera 整个降级链跑完之前 camOk 一直是 false、camError 一直是空。
+// 修法：加 camStarting 状态，启动中只显示“正在启动相机…”+转圈、不给重试按钮；
+// 只有所有降级都失败才显示真报错+重试；流一拿到就亮取景，不等 play() 回来。
+check('相机启动中有 camStarting 状态（启动中显示“正在启动相机…”+转圈）', cam.includes("const camStarting = ref(false)") && cam.includes('v-if="camStarting"') && cam.includes('正在启动相机…') && cam.includes('cam-spinner'))
+check('启动中不给重试按钮（重试只在真失败后出现）', cam.includes('v-if="!camStarting"') && cam.includes('重试打开相机'))
+check('startCamera 入口置 camStarting=true，成功/失败都清掉', cam.includes('camStarting.value = true') && (cam.match(/camStarting\.value = false/g) || []).length >= 2)
+check('流一拿到就亮取景（camOk 在 play() 之前翻 true，不等 5 秒）', cam.indexOf('camOk.value = true') < cam.indexOf("withTimeout(videoEl.value.play()"))
+check('启动转圈样式在 style.css（.cam-spinner + @keyframes spin）', css.includes('.cam-spinner') && css.includes('@keyframes spin'))
+check('真失败才写报错（失败分支先清 camStarting 再写 camError）', cam.includes("camOk.value = false\n  camStarting.value = false\n  camError.value = '无法打开相机：'"))
 check('后台持续监听定位', geoJs.includes('watchPosition') && geoJs.includes('clearWatch'))
 check('refreshLocation 返回进行中的 promise（CameraView 里 locPending）', cam.includes('if (locPending) return locPending') && cam.includes('return locPending'))
 check('地址短格式 5 级（省+市+区县+街道/镇+道路/小区/派出所/社区）', geoJs.includes('formatAmapAddress') && geoJs.includes('formatNominatimAddress') && geoJs.includes('shortenAddressFromParts'))
