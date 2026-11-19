@@ -1,7 +1,33 @@
 <template>
-  <!-- v3.0.0 全屏拍摄页：取景铺满整个拍摄区，控制浮在取景上；
-       顶部项目名输入栏已去掉（改名走信息条/更多菜单里的改名弹层）。 -->
+  <!-- v3.0.1 拍摄页（第五版效果图）：顶部项目名 + 四个控制按钮在黑区里，
+       中间 3:4 取景，下方模式药丸 + 快门行；底部导航是 App.vue 的拍摄/相册。 -->
   <div class="shoot" :class="{ 'native-on': nativeActive }">
+  <!-- 顶部：项目名称（老版样式，点一下改名）+ 四个控制按钮（黑色毛玻璃圆钮，不悬浮在取景上） -->
+  <div class="topbar">
+    <div class="project-row">
+      <span class="project-label">项目名称</span>
+      <button class="project-box" @click="openProjectEdit" title="点一下改项目名称">
+        <span class="project-name">{{ project || '（未填）' }}</span>
+        <svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="ctrl-row">
+      <button class="ctrl-btn" @click="openSettings" title="菜单：打开设置" aria-label="菜单">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button class="ctrl-btn" @click="cycleFlashMode" :title="'闪光灯：' + flashLabel" aria-label="闪光灯">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span v-if="flashMode === 'off'" class="flash-slash" aria-hidden="true"></span>
+        <span v-if="flashMode === 'auto'" class="flash-badge" aria-hidden="true">A</span>
+      </button>
+      <button class="ctrl-btn" @click="toggleFacing" title="前后切换" aria-label="前后切换">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="ctrl-btn" @click="showMoreMenu = true" title="更多" aria-label="更多">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linejoin="round"/><circle cx="8.5" cy="11.5" r="1" fill="#fff"/><circle cx="12" cy="11.5" r="1" fill="#fff"/><circle cx="15.5" cy="11.5" r="1" fill="#fff"/></svg>
+      </button>
+    </div>
+  </div>
   <div class="stage" ref="stageEl"
     @pointerdown="onStagePointerDown" @pointermove="onStagePointerMove" @pointerup="onStagePointerUp" @pointercancel="onStagePointerCancel">
     <div class="cam-wrap" :style="camWrapStyle">
@@ -21,14 +47,16 @@
         <div v-else class="bar-mini">项目名称：{{ project || '（未填）' }} · 点一下展开信息</div>
       </div>
     </div>
-    <!-- 裁剪框提示：3:4 / 1:1 时在 9:16 全屏取景里画出对应比例的保留区域（虚线框）；
+    <!-- 裁剪框提示：所选比例与 3:4 取景框不一致时，在取景里画出对应比例的保留区域（虚线框）；
          拍照仍按 centerCropRect 对画面中心裁剪 -->
     <div v-if="camOk && cropGuide" class="crop-guide" :style="cropGuideStyle"><span class="crop-label">{{ ratio }} 裁剪框</span></div>
-    <button v-if="camOk" class="flash-btn" @click="cycleFlashMode" title="闪光灯：点一下切换 自动/常开/关闭">闪光灯·{{ flashLabel }}</button>
-    <button v-if="camOk" class="more-btn" @click="showMoreMenu = true" title="更多">更多</button>
     <div v-if="recording" class="rec-chip">● {{ recTimeText }}</div>
     <div v-if="focusBox" class="focus-box" :style="{ left: focusBox.x + 'px', top: focusBox.y + 'px' }"></div>
     <div v-if="expIndicator" class="exp-indicator">☀ {{ expText }}</div>
+    <!-- 重新定位准星：取景右下角，点一下重新定位（信息条右侧留空，不压文字） -->
+    <button v-if="camOk" class="relocate-btn" @click="refreshLocation" title="重新定位" aria-label="重新定位">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.8"/><circle cx="12" cy="12" r="1.6" fill="#fff"/><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
     <div v-if="!camOk" class="cam-off">
       <div v-if="camStarting" class="cam-starting"><span class="cam-spinner"></span>正在启动相机…</div>
       <div v-else>{{ camError || '相机未启动' }}</div>
@@ -44,30 +72,32 @@
       <input ref="videoFileInput" type="file" accept="video/*" capture="environment" style="display:none" @change="onVideoFilePicked" />
     </div>
     </div>
-    <!-- 浮在取景上的控制：快门居中在底部，模式胶囊在快门上方，比例/变焦圆钮在右侧竖排 -->
-    <div v-if="camOk" class="float-ctrl" :style="{ bottom: ctrlBottom + 'px' }">
-      <div class="float-side">
-        <button class="circle-btn" @click="showRatioPanel = true" title="照片比例">{{ ratio }}</button>
-        <button class="circle-btn zoom-btn" @click="onZoomBtnClick"
-          @pointerdown="onZoomPressStart" @pointermove="onZoomPressMove" @pointerup="onZoomPressEnd" @pointercancel="onZoomPressEnd"
-          :title="nativeActive ? '原生预览：双指捏合变焦' : '镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）'">{{ zoomLabel }}</button>
-      </div>
-      <div class="mode-row">
-        <button :class="{ active: mode === 'photo' }" :disabled="recording" @click="switchMode('photo')">📷 拍照</button>
-        <button :class="{ active: mode === 'video' }" :disabled="recording" @click="switchMode('video')">🎥 录像</button>
-      </div>
-      <button v-if="mode === 'photo'" class="shutter photo" :disabled="!camOk" @click="takePhoto">拍照</button>
+    <!-- 定位状态浮条：只在定位中 / 定位出错时显示，点一下改项目名称；定位就绪后隐藏（坐标看底部信息条） -->
+    <div v-if="locBusy || locError" class="hint" :class="{ err: locError }" @click="openProjectEdit" title="点一下改项目名称">{{ locHint }}</div>
+  </div>
+  <!-- 底部控制区：模式药丸 + 快门行（不在取景上悬浮；药丸与快门同一条竖直中线） -->
+  <div class="bottom-ctrl">
+    <div class="mode-row">
+      <button :class="{ active: systemCamActive }" :disabled="recording" @click="switchMode('system')">系统相机</button>
+      <button :class="{ active: mode === 'photo' && !systemCamActive }" :disabled="recording" @click="switchMode('photo')">拍照</button>
+      <button :class="{ active: mode === 'video' }" :disabled="recording" @click="switchMode('video')">录像</button>
+    </div>
+    <div class="shutter-row">
+      <button class="circle-btn" @click="showRatioPanel = true" title="照片比例">{{ ratio }}</button>
+      <button v-if="mode !== 'video'" class="shutter photo" :disabled="!camOk" @click="takePhoto" title="拍照"></button>
       <button v-else class="shutter" :class="{ rec: recording }" :disabled="!camOk" @click="recording ? stopRecording() : startRecording()">
         {{ recording ? '停止' : '录像' }}
       </button>
-      <div v-if="zoomDragging" class="zoom-bubble">{{ zoomLabel }}</div>
+      <button class="circle-btn zoom-btn" @click="onZoomBtnClick"
+        @pointerdown="onZoomPressStart" @pointermove="onZoomPressMove" @pointerup="onZoomPressEnd" @pointercancel="onZoomPressEnd"
+        :title="nativeActive ? '原生预览：双指捏合变焦' : '镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）'">{{ zoomLabel }}</button>
     </div>
-    <!-- 定位状态浮条（点一下改项目名称） -->
-    <div class="hint" :class="{ err: locError }" @click="openProjectEdit" title="点一下改项目名称">{{ locHint }}</div>
+    <div v-if="zoomDragging" class="zoom-bubble">{{ zoomLabel }}</div>
   </div>
   </div>
 
-  <!-- 更多菜单：前后切换 / 相册选图 / 重新定位 / 系统相机 / 改项目名称 -->
+  <!-- 更多菜单：前后切换 / 相册选图 / 重新定位 / 改项目名称
+       （系统相机已升为快门上方的模式段，不再放这里，避免重复） -->
   <div v-if="showMoreMenu" class="modal-mask" @click.self="showMoreMenu = false">
     <div class="sheet panel-sheet">
       <div class="sheet-head"><h2>更多</h2><button class="sheet-close" @click="showMoreMenu = false">✕</button></div>
@@ -75,10 +105,9 @@
         <button @click="moreToggleFacing">前后切换</button>
         <button @click="moreSystemAlbum">相册选图</button>
         <button @click="moreRelocate">重新定位</button>
-        <button @click="moreSystemCamera">系统相机</button>
         <button @click="moreEditProject">改项目名称</button>
       </div>
-      <div class="field-desc">系统相机是兜底：原生预览打不开、或要用长焦/超广角时用它，照片同样烧水印。</div>
+      <div class="field-desc">系统相机已移到快门上方的模式切换里，点一下就打开手机原生相机，照片同样烧水印。</div>
     </div>
   </div>
 
@@ -89,7 +118,7 @@
       <div class="pick-row">
         <button v-for="r in RATIO_OPTIONS" :key="r.label" :class="{ active: ratio === r.label }" @click="setRatio(r.label); showRatioPanel = false">{{ r.label }}</button>
       </div>
-      <div class="field-desc">默认 3:4；9:16 取景铺满上下，3:4 / 1:1 取景里显示裁剪框提示，拍照按所选比例中心裁剪。</div>
+      <div class="field-desc">默认 3:4；取景框固定 3:4，拍照按所选比例中心裁剪；选 9:16 / 1:1 时取景里显示裁剪框提示。</div>
     </div>
   </div>
 
@@ -164,13 +193,17 @@ import { drawWatermark, drawVideoFrame, burnPhotoWatermark, centerCropRect, MAX_
 import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, getWatermarkOpacity, deleteAppFile, backfillRecordsAddress } from '../utils/store.js'
 import { useKeyboardHeight, focusInputAtEnd } from '../utils/keyboard.js'
 
-const emit = defineEmits(['saved'])
+const emit = defineEmits(['saved', 'open-settings'])
 const videoEl = ref(null)
 const project = ref(getLastProject())
 const wmText = ref(getWatermarkText())
 const wmOpacity = ref(getWatermarkOpacity())
 const history = ref(getProjectHistory())
 const mode = ref('photo')
+// 系统相机段正在打开原生相机（药丸高亮用）：mode 保持 photo 不动，
+// 这样系统相机回来后的恢复逻辑（按 mode 走原生/网页路线）不用改，也不会和
+// visibilitychange 的 resume 抢；拍完/返回后 systemCamActive 清掉，药丸回到拍照。
+const systemCamActive = ref(false)
 const facing = ref('environment')
 // 闪光灯：默认自动（暗了自动补光），点一下在 自动→常开→关闭 之间切换
 const flashMode = ref(localStorage.getItem('fw_flash_mode') || 'auto')
@@ -200,7 +233,7 @@ const zoom = ref(1)
 const zoomCaps = ref(null)
 // 曝光补偿能力（exposureCompensation 的 min/max/step），不支持的设备是 null
 const expCaps = ref(null)
-// 取景舞台：v3.0.0 全屏，舞台铺满拍摄区；stageBox 供裁剪框和原生预览定位用
+// 取景舞台：v3.0.1 固定 3:4；stageBox 供裁剪框和原生预览定位用
 const stageEl = ref(null)
 const stageBox = ref({ w: 0, h: 0 })
 const showRatioPanel = ref(false)
@@ -285,19 +318,18 @@ trackOverlay('cam-lens', showLensPanel, () => { showLensPanel.value = false })
 trackOverlay('cam-more', showMoreMenu, () => { showMoreMenu.value = false })
 trackOverlay('cam-edit', editSheet, () => { editSheet.value = false })
 trackOverlay('cam-preview', preview, () => { preview.value = null })
-// 全屏取景：cam-wrap 铺满舞台（CSS 定）；比例只影响裁剪框提示和拍照裁剪，不再缩小取景框
+// 3:4 取景：cam-wrap 铺满舞台（CSS 定）；比例只影响裁剪框提示和拍照裁剪，不再缩小取景框
 const camWrapStyle = computed(() => {
   void stageBox.value // 依赖舞台尺寸：尺寸变了才重算（ResizeObserver 更新 stageBox）
   return { width: '100%', height: '100%' }
 })
-// 浮在取景上的控制组离舞台底部的距离 = 信息条高度 + 14px（不压住信息条）
-// 信息条：每行 13px×1.5 行高 + 上下各 8px；5 行约 114px，4 行（无地址）约 94px，收起约 36px
-const ctrlBottom = computed(() => {
-  const barH = infoCollapsed.value ? 36 : (loc.value.address ? 114 : 94)
-  return barH + 14
+// 裁剪框提示：拍照模式且所选比例与 3:4 取景框不一致时，在取景里画出该比例的最大内接矩形（虚线框）；
+// 取景框固定 3:4，选 3:4 时就是整框，不画；选 9:16 / 1:1 时画出保留区域。
+const cropGuide = computed(() => {
+  if (mode.value !== 'photo' || stageBox.value.w <= 0 || stageBox.value.h <= 0) return false
+  const r = (RATIO_OPTIONS.find((x) => x.label === ratio.value) || RATIO_OPTIONS[0]).value
+  return Math.abs(r - stageBox.value.w / stageBox.value.h) > 0.01
 })
-// 裁剪框提示：拍照模式且比例不是 9:16 时，在舞台里画出该比例的最大内接矩形（虚线框）
-const cropGuide = computed(() => mode.value === 'photo' && ratio.value !== '9:16' && stageBox.value.w > 0 && stageBox.value.h > 0)
 const cropGuideStyle = computed(() => {
   const { w, h } = stageBox.value
   const r = (RATIO_OPTIONS.find((x) => x.label === ratio.value) || RATIO_OPTIONS[0]).value
@@ -345,8 +377,9 @@ function toggleInfoBar() {
 function moreToggleFacing() { showMoreMenu.value = false; toggleFacing() }
 function moreSystemAlbum() { showMoreMenu.value = false; systemCamera('album') }
 function moreRelocate() { showMoreMenu.value = false; refreshLocation() }
-function moreSystemCamera() { showMoreMenu.value = false; systemCamera('camera') }
 function moreEditProject() { showMoreMenu.value = false; openProjectEdit() }
+// 顶栏菜单按钮：打开设置页（App.vue 切到相册 tab 并滚到设置卡片）
+function openSettings() { emit('open-settings') }
 
 // ---- 原生相机预览（v3.0.0）----
 async function startNativePreview() {
@@ -852,8 +885,8 @@ async function focusAt(p) {
   } catch { /* 硬件对焦失败也不影响拍摄，只留对焦框 */ }
 }
 function onStagePointerDown(e) {
-  // 信息条（点它收起/展开）、闪光灯/更多按钮、相机未启动面板上的按钮：各有自己的点击，不触发对焦/曝光
-  if (e.target && e.target.closest && e.target.closest('.bar, .flash-btn, .more-btn, .cam-off, .float-ctrl, .hint')) return
+  // 信息条（点它收起/展开）、重新定位准星、定位提示、相机未启动面板上的按钮：各有自己的点击，不触发对焦/曝光
+  if (e.target && e.target.closest && e.target.closest('.bar, .relocate-btn, .cam-off, .hint')) return
   if (nativeActive.value) return // 原生预览：对焦/捏合由插件处理
   if (!camOk.value) return
   stagePointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -1082,11 +1115,23 @@ function stopStream() {
     stream.value = null
   }
 }
-// 切拍照/录像（v3.0.0）：两路相机要换着开——
+// 切拍照/录像/系统相机（v3.0.0 + v3.0.1）：拍照和录像两路相机要换着开——
 // 拍照模式原生端用原生预览，录像模式用网页流（水印逐帧烧进 canvas，原生录像是无水印 mp4）；
 // 切模式时先停掉另一路再开这一路，不让两路同时占着摄像头。
+// 系统相机段（v3.0.1）：点一下打开手机原生相机（走系统相机流程，带 hardened resume），
+// 拍完/返回后 mode 本来就是 photo，药丸高亮回到拍照；录像时不响应。
 async function switchMode(m) {
   if (recording.value) return
+  if (m === 'system') {
+    if (systemCamActive.value) return
+    systemCamActive.value = true
+    try {
+      await systemCamera('camera')
+    } finally {
+      systemCamActive.value = false
+    }
+    return
+  }
   if (m === mode.value) return
   if (m === 'video') {
     await stopNativePreview()

@@ -15,7 +15,7 @@
         <!-- v2.1.8 隐私同意门：只有用户点了“同意并继续”才挂载 CameraView；
              CameraView 一挂载就开相机+定位，所以不同意/未决定时相机和定位都不会启动。
              注意这里是按同意状态 v-if，不是按 tab 卸载——切 tab 仍走 v-show 常驻。 -->
-        <CameraView v-if="consent === 'accepted'" ref="camRef" @saved="onSaved" />
+        <CameraView v-if="consent === 'accepted'" ref="camRef" @saved="onSaved" @open-settings="onOpenSettings" />
         <div v-else class="consent-gate">
           <h2>开始拍摄前，请先同意隐私政策</h2>
           <p class="field-desc">拍摄需要相机和定位权限，同意后才会启动相机和定位。不同意也可以先看看相册。</p>
@@ -181,6 +181,13 @@ async function onSaved() {
   count.value = loadRecords().length
   await nextTick()
   if (worksRef.value) worksRef.value.refresh()
+}
+
+// 拍摄页顶栏菜单按钮（v3.0.1）：打开设置页——切到相册 tab，滚到最底下的设置卡片。
+async function onOpenSettings() {
+  tab.value = 'works'
+  await nextTick()
+  if (worksRef.value && worksRef.value.scrollToSettings) worksRef.value.scrollToSettings()
 }
 
 onBeforeUnmount(() => {

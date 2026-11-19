@@ -615,11 +615,17 @@ function videoUrl(it) {
 }
 
 async function fileSrc(it) {
+  const mime = it.type === 'video' ? (it.mime || 'video/webm') : 'image/jpeg'
+  // 网页/PWA（v3.0.1 修）：Filesystem.getUri() 在 web 上返回的是 IndexedDB 键
+  // （/DATA/works/…），不是真路径，convertFileSrc 出来的链接打不开，详情页图片裂开；
+  // 非原生平台直接读文件转 data URL。原生端不受影响，仍走 getUri + convertFileSrc。
+  if (!Capacitor.isNativePlatform()) {
+    return await readAppFile(it.path, mime)
+  }
   try {
     const { uri } = await Filesystem.getUri({ path: it.path, directory: Directory.Data })
     return Capacitor.convertFileSrc(uri)
   } catch {
-    const mime = it.type === 'video' ? (it.mime || 'video/webm') : 'image/jpeg'
     return await readAppFile(it.path, mime)
   }
 }
@@ -795,6 +801,14 @@ async function shareDetail() {
   }
 }
 
+// 拍摄页顶栏菜单按钮（v3.0.1）：打开设置页——滚到最底下的设置卡片
+function scrollToSettings() {
+  const el = worksEl.value
+  if (!el) return
+  const card = el.querySelector('.settings-card')
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 onMounted(() => {
   refresh()
   // 地址后来才拿到并回填了已保存的照片：刷新列表（详情正开着时地址也会跟着变）
@@ -804,5 +818,5 @@ onBeforeUnmount(() => {
   clearBackOverlays() // 兜底：切 tab 卸载时清掉本页残留的弹层注册
   window.removeEventListener('fw-records-changed', refresh)
 })
-defineExpose({ refresh })
+defineExpose({ refresh, scrollToSettings })
 </script>

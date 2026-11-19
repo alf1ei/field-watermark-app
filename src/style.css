@@ -24,7 +24,7 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
    不用直接 v-show。切到相册时这里 display:none，相机流不停。 */
 .cam-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-/* ---- 拍摄页全屏（v3.0.0）：取景铺满整个拍摄区，控制浮在取景上 ---- */
+/* ---- 拍摄页（v3.0.1）：顶栏 + 3:4 取景 + 底部控制，控制不在取景上悬浮 ---- */
 .shoot { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 原生预览时 WebView 之后就是相机画面：整条 HTML 背景链都要透明，否则原生画面透不出来
    （插件自己会把 WebView 背景设透明，HTML 自己的背景也得跟着透） */
@@ -32,11 +32,10 @@ body.native-preview, body.native-preview #app, body.native-preview .app, body.na
 body.native-preview .cam-page, body.native-preview .shoot, body.native-preview .stage,
 body.native-preview .cam-wrap { background: transparent; }
 
-/* ---- 底部导航：磨砂玻璃条 ---- */
+/* ---- 底部导航：磨砂玻璃条（v3.0.1：实底深蓝黑，选中段深蓝药丸 #22375e，和模式药丸同一套） ---- */
 nav.tabs {
   display: flex; gap: 6px; padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
-  background: rgba(13,18,26,.6);
-  -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+  background: #0b1220;
   border-top: 1px solid rgba(255,255,255,.08);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
 }
@@ -47,7 +46,7 @@ nav.tabs button {
 }
 nav.tabs button .tab-ic { font-size: 17px; }
 nav.tabs button.active {
-  color: #fff; background: rgba(47,140,255,.22);
+  color: #fff; background: #22375e;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
 }
 .count-badge {
@@ -57,10 +56,50 @@ nav.tabs button.active {
   display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* ---- 定位状态浮条（v3.0.0）：浮在取景上部，点一下改项目名称；最多 3 行 ---- */
+/* ---- 顶部栏（v3.0.1）：项目名称 + 四个控制按钮，实底黑区，不悬浮在取景上 ---- */
+.topbar {
+  flex: none; background: #0b1220;
+  padding: 6px 14px 8px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.project-row { display: flex; align-items: center; gap: 12px; height: 40px; }
+.project-label { font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap; }
+.project-box {
+  flex: 1; min-width: 0; height: 40px; padding: 0 12px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  border-radius: 14px; border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.07); color: #fff; font-size: 15px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+.project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.project-box .chev { flex: none; opacity: .85; }
+.ctrl-row { display: flex; align-items: center; justify-content: space-around; height: 44px; }
+.ctrl-btn {
+  position: relative; width: 44px; height: 44px; border-radius: 50%; flex: none;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08); color: #fff;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 4px 14px rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+/* 闪光灯状态小标记：关闭画斜线，自动右下角小 A，常开只有闪电 */
+.flash-slash {
+  position: absolute; left: 50%; top: 50%; width: 26px; height: 2px;
+  background: #fff; border-radius: 2px; transform: translate(-50%,-50%) rotate(-45deg);
+}
+.flash-badge {
+  position: absolute; right: 1px; bottom: 1px; width: 14px; height: 14px; border-radius: 50%;
+  background: rgba(0,0,0,.65); border: 1px solid rgba(255,255,255,.5);
+  color: #fff; font-size: 9px; font-weight: 800; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ---- 定位状态浮条（v3.0.1）：只在定位中/出错时浮在取景上部，点一下改项目名称；最多 3 行 ----
+   注意：不要用 left:50% + translateX(-50%) 居中——transform + line-clamp 在这个 Chromium 里
+   会把第 4 行漏画到 pill 外面；改用 left/right 6% 拉满宽度（长文案两行放得下），不用 transform。 */
 .hint {
-  position: absolute; top: 54px; left: 50%; transform: translateX(-50%); z-index: 5;
-  max-width: 88%; padding: 8px 14px; border-radius: 14px;
+  position: absolute; top: 10px; left: 6%; right: 6%; z-index: 5;
+  padding: 8px 14px; border-radius: 14px;
   background: rgba(0,0,0,.45); color: #dbe5ef; font-size: 12px; line-height: 1.6;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.12); cursor: pointer; text-align: center;
@@ -68,8 +107,8 @@ nav.tabs button.active {
 }
 .hint.err { color: #ffb4b4; }
 
-/* ---- 取景舞台：9:16 铺满上下（v3.0.0 全屏），3:4 / 1:1 只占对应区域 ---- */
-.stage { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; touch-action: none; /* 双指捏合变焦自己接管手势，不让浏览器滚动/缩放页面 */ }
+/* ---- 取景舞台（v3.0.1）：固定 3:4，不再铺满全屏；上下是实底黑区（顶栏/底部控制） ---- */
+.stage { position: relative; flex: none; width: 100%; aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; touch-action: none; /* 双指捏合变焦自己接管手势，不让浏览器滚动/缩放页面 */ }
 .cam-wrap { position: relative; flex: none; background: #000; overflow: hidden; }
 .cam-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* 实时水印预览层：与烧录函数同一版式（斜水印 -30° 居中 + 底部黑条），所见即所得；点信息条改项目名称 */
@@ -80,30 +119,28 @@ nav.tabs button.active {
   font-weight: 900; font-size: 26vw; color: rgba(255,255,255,var(--wm-opacity, .2));
   letter-spacing: .02em; white-space: nowrap;
 }
-.wm-overlay .bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); padding: 8px 12px; font-size: 13px; line-height: 1.5; pointer-events: auto; cursor: pointer; }
+.wm-overlay .bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.55); padding: 8px 56px 8px 12px; font-size: 13px; line-height: 1.5; pointer-events: auto; cursor: pointer; }
 .wm-overlay .bar .p { font-weight: 700; }
 .wm-overlay .bar div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 信息条收起态（v3.0.0）：只留一行项目名，点一下展开 */
-.wm-overlay .bar.collapsed { padding: 6px 12px; }
+.wm-overlay .bar.collapsed { padding: 6px 56px 6px 12px; }
 .wm-overlay .bar-mini { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 裁剪框提示（v3.0.0）：3:4 / 1:1 时在 9:16 全屏取景里画出对应比例的保留区域（虚线框，仅提示用） */
+/* 裁剪框提示（v3.0.1）：所选比例与 3:4 取景框不一致时画出对应比例的保留区域（虚线框，仅提示用） */
 .crop-guide { position: absolute; z-index: 4; border: 2px dashed rgba(255,255,255,.85); border-radius: 4px; pointer-events: none; }
 .crop-label {
   position: absolute; top: 6px; left: 6px; padding: 2px 8px; border-radius: 999px;
   background: rgba(0,0,0,.55); color: #fff; font-size: 11px; font-weight: 700; white-space: nowrap;
 }
-.flash-btn, .more-btn {
-  position: absolute; top: 10px; z-index: 5;
-  padding: 8px 14px; border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.2);
-  background: rgba(0,0,0,.45); color: #fff; font-size: 13px; font-weight: 600;
+/* 重新定位准星（v3.0.1）：取景右下角，信息条右侧留空给它，不压文字 */
+.relocate-btn {
+  position: absolute; right: 10px; bottom: 10px; z-index: 6;
+  width: 44px; height: 44px; border-radius: 50%; padding: 0;
+  border: 1px solid rgba(255,255,255,.22);
+  background: rgba(0,0,0,.45); color: #fff;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.18);
-  white-space: nowrap;
+  display: flex; align-items: center; justify-content: center;
 }
-/* 右上并排：更多在最右，闪光灯在它左边（闪光灯文字长，限宽防重叠） */
-.more-btn { right: 10px; }
-.flash-btn { right: 78px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
 /* 录像计时：取景左上角小角标（v2.1.5 从快门下的地址行移过来） */
 .rec-chip {
   position: absolute; top: 10px; left: 10px; z-index: 5;
@@ -136,43 +173,47 @@ nav.tabs button.active {
 .cam-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---- 拍摄控制（v3.0.0 全屏）：浮在取景上的控制，模式胶囊在上、快门居中在下，
-   比例/变焦圆钮在右侧竖排；整块不挡手势（空白处点透，只有按钮接手势） ---- */
-.float-ctrl {
-  position: absolute; left: 0; right: 0; z-index: 5;
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  pointer-events: none;
+/* ---- 底部控制区（v3.0.1）：模式药丸 + 快门行，在取景下方实底黑区里，不悬浮；
+   药丸与快门同一条竖直中线（两区都居中，快门行左右圆钮等宽对称） ---- */
+.bottom-ctrl {
+  position: relative; flex: none; background: #0b1220;
+  padding: 6px 0 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
-.float-ctrl > * { pointer-events: auto; }
-/* 右侧竖排圆钮：与快门底部对齐 */
-.float-side { position: absolute; right: 16px; bottom: 0; display: flex; flex-direction: column; gap: 12px; }
+.shutter-row {
+  display: flex; align-items: center; justify-content: center; gap: 50px;
+  height: 92px;
+}
+/* 左右圆钮：黑色毛玻璃（和顶栏四个圆钮同一套） */
 .circle-btn {
   width: 56px; height: 56px; border-radius: 50%; flex: none;
-  border: 1px solid rgba(255,255,255,.22);
-  background: rgba(255,255,255,.1); color: #fff; font-size: 15px; font-weight: 700;
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.08); color: #fff; font-size: 15px; font-weight: 700;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 4px 14px rgba(0,0,0,.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 4px 14px rgba(0,0,0,.35);
+  display: flex; align-items: center; justify-content: center; padding: 0;
 }
-/* 模式切换：一段式胶囊 */
+/* 模式切换：黑色毛玻璃药丸，三段（系统相机/拍照/录像）；选中段深蓝 #22375e，和底部导航选中态同一套 */
 .mode-row {
   display: flex; gap: 4px; justify-content: center;
-  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.10);
+  background: rgba(13,18,26,.65); border: 1px solid rgba(255,255,255,.14);
   border-radius: 999px; padding: 4px;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
 }
 .mode-row button {
-  padding: 8px 22px; border-radius: 999px; border: none;
-  background: transparent; color: #c8d4e2; font-size: 14px; font-weight: 600;
+  padding: 6px 18px; border-radius: 999px; border: none;
+  background: transparent; color: #9fb0c3; font-size: 14px; font-weight: 600;
 }
 .mode-row button.active {
-  background: rgba(255,255,255,.16); color: #fff; font-weight: 700;
+  background: #22375e; color: #fff; font-weight: 700;
   box-shadow: 0 2px 10px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.22);
 }
 /* 变焦按钮：长按后上下滑调变焦（v2.1.6），touch-action: none 让滑动不被浏览器抢去滚动页面 */
 .zoom-btn { touch-action: none; }
-/* 变焦拖动时的倍数气泡：浮在控制区上方，手指盖住按钮时也能看到当前倍数 */
+/* 变焦拖动时的倍数气泡：浮在底部控制区上方，手指盖住按钮时也能看到当前倍数 */
 .zoom-bubble {
-  position: absolute; right: 0; bottom: 100%; z-index: 6; margin-bottom: 10px;
+  position: absolute; right: 12px; bottom: 100%; z-index: 6; margin-bottom: 6px;
   padding: 8px 16px; border-radius: 999px;
   background: rgba(20,26,36,.85); color: #fff; font-size: 16px; font-weight: 800;
   border: 1px solid rgba(255,255,255,.2);
@@ -180,9 +221,9 @@ nav.tabs button.active {
   box-shadow: 0 6px 20px rgba(0,0,0,.45);
   pointer-events: none; white-space: nowrap;
 }
-/* 快门：红色大圆钮（白边红底）；录像/停止也保持红色系 */
+/* 快门：红色大圆钮（白边红底，无文字）；录像/停止也保持红色系 */
 .shutter {
-  width: 76px; height: 76px; border-radius: 50%;
+  width: 84px; height: 84px; border-radius: 50%;
   border: 5px solid rgba(255,255,255,.92);
   background: #ff3b30; color: #fff; font-size: 15px; font-weight: 700;
   box-shadow: 0 0 0 4px rgba(255,59,48,.3), 0 10px 26px rgba(255,59,48,.45), inset 0 2px 6px rgba(255,255,255,.25);
