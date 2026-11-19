@@ -45,7 +45,8 @@ jobs:
 
       - name: Create fresh Capacitor Android project (default icons)
         # The snapshot excludes binary launcher icons, so regenerate the
-        # Android project from scratch; custom GSZD icons are re-added later.
+        # Android project from scratch; the launcher icons are generated
+        # from assets/icon.png by the @capacitor/assets step below.
         run: |
           rm -rf android
           npx cap add android
@@ -54,10 +55,16 @@ jobs:
       - name: Restore AndroidManifest with camera/location/gallery permissions
         run: cp android-manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 
+      - name: Generate Android launcher icons from assets/icon.png
+        # assets/icon.png + assets/icon-background.png are in the repo (binary
+        # files, uploaded via the web UI); @capacitor/assets writes the mipmap
+        # launcher icons into the fresh android/ project.
+        run: npx @capacitor/assets generate --android --iconBackgroundColor '#001C40'
+
       - name: Set versionCode/versionName from package.json
         # 商店上架要求 versionCode 每次发布递增：cap add android 每次都把
         # versionCode 重置成 1，所以这里按 major*10000+minor*100+patch 自动算
-        # （2.1.8 → 20108），找不到 versionCode/versionName 就明确失败。
+        # （3.0.0 → 30000），找不到 versionCode/versionName 就明确失败。
         run: |
           cat > /tmp/set-version.mjs <<'EOF'
           import { readFileSync, writeFileSync } from 'node:fs'
@@ -87,17 +94,17 @@ jobs:
           cd android
           gradle assembleDebug --no-daemon --console=plain
 
-      - name: Rename debug APK to 长江现场水印相机v2.1.8-debug
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/长江现场水印相机v2.1.8-debug.apk"
+      - name: Rename debug APK to 长江现场水印相机v3.0.0-debug
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/长江现场水印相机v3.0.0-debug.apk"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 长江现场水印相机-2.1.8-debug-apk
-          path: android/app/build/outputs/apk/debug/长江现场水印相机v2.1.8-debug.apk
+          name: 长江现场水印相机-3.0.0-debug-apk
+          path: android/app/build/outputs/apk/debug/长江现场水印相机v3.0.0-debug.apk
           retention-days: 30
           if-no-files-found: error
-      
+
       - name: Check release signing secrets
         # 上架用的 release 包必须签名。四个 Secrets 缺任何一个都明确报错、
         # 整个构建失败，绝不悄悄回落到 debug 包；debug 包上面已经打好并上传
@@ -136,26 +143,26 @@ jobs:
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
             --key-pass "pass:$KEY_PASSWORD" \
-            --out "app/build/outputs/apk/release/长江现场水印相机v2.1.8.apk" \
+            --out "app/build/outputs/apk/release/长江现场水印相机v3.0.0.apk" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "app/build/outputs/apk/release/长江现场水印相机v2.1.8.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "app/build/outputs/apk/release/长江现场水印相机v3.0.0.apk"
           rm -f app/release.keystore
           ls -l app/build/outputs/apk/release/
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 长江现场水印相机-2.1.8-release-apk
-          path: android/app/build/outputs/apk/release/长江现场水印相机v2.1.8.apk
+          name: 长江现场水印相机-3.0.0-release-apk
+          path: android/app/build/outputs/apk/release/长江现场水印相机v3.0.0.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Create Release v2.1.8 with signed APK
+      - name: Create Release v3.0.0 with signed APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2.1.8
-          name: 长江现场水印相机 v2.1.8
-          files: android/app/build/outputs/apk/release/长江现场水印相机v2.1.8.apk
+          tag_name: v3.0.0
+          name: 长江现场水印相机 v3.0.0
+          files: android/app/build/outputs/apk/release/长江现场水印相机v3.0.0.apk
           fail_on_unmatched_files: true
 
       - name: Publish APK as base64 chunks (retrieval fallback)
@@ -179,5 +186,5 @@ jobs:
           git config user.name "github-actions"
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add -A
-          git commit -qm "APK base64 chunks v2.1.8"
+          git commit -qm "APK base64 chunks v3.0.0"
           git push -qf origin releases-b64
