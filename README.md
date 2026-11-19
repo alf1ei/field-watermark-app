@@ -14,7 +14,7 @@
   - 逆地理编码顺序：高德 restapi（需在相册页自填 Key，没有 Key 直接跳过，不写死假 Key）→ Nominatim（OpenStreetMap，无需 Key）。
   - 照片最长边 >2400px 等比缩小，导出 JPEG 0.92。
 - **视频**：也要水印，同一版式，1080p（1920×1080 画布逐帧烧录后经 `canvas.captureStream + MediaRecorder` 录制），拍完能预览、能删，时长不限。输出为 webm（Chrome/WebView 的 MediaRecorder 原生格式；iOS 端如需 mp4 见下文“已知限制”）。
-- **相册列表**：按项目名分组，缩略图，点开大图/播放视频，单张删除、分享/导出。长按多选，拖进文件夹批量归档，多选模式里可批量删除（只删 App 内的，系统相册里的需手动删）。点进照片连点 7 次可改项目名称/时间/地址（用留存的原图重新烧水印）。
+- **相册列表**：按项目名分组，缩略图，点开大图/播放视频，单张删除、分享/导出。长按多选，拖进文件夹批量归档，多选模式里可批量删除（只删 App 内的，系统相册里的需手动删）。
 - **QQ 群自动上传：已砍掉**（QQ 没有官方接口能让第三方 App 自动同步到群里）。
 
 ## 技术栈
@@ -24,7 +24,6 @@ Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.field
 - 相机：App 内 `getUserMedia` 实时取景（可叠加实时水印预览，所见即所得）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。镜头面板列出手机全部摄像头，可切换、调变焦；读不到时自动重试、打开面板重读、也可手动重读，实在读不到时按前后方向切换。
 - 定位：`@capacitor/geolocation`，失败回退浏览器 Geolocation。
 - 存储：`@capacitor/filesystem`（`Directory.Data/works/`）+ localStorage 记录列表；相册保存用 `@capacitor-community/media`（走系统 MediaStore），失败时退到外部共享目录，再失败则只存 App 内并明确提示。
-- 原图留存：照片另存一份无水印原图（`_orig.jpg`，仅 App 内，不进相册），详情页连点 7 次编辑文字时用它重新烧水印替换。
 
 ## 目录结构
 
