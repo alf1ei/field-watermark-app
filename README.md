@@ -4,26 +4,28 @@
 
 ## 功能（已和用户确认，v1.0.0）
 
-- **只填项目名称**：拍照界面顶部点一下输入，记住上次输入的，支持历史快速选。
-- **拍照**：一次拍一张，拍完预览，能删了重拍。照片同时存在 App 内相册列表和手机相册里，没网也能拍、存手机。点取景器对焦、上下滑调曝光。
-- **水印（真烧进像素）**：GSZD 大号半透明白色，约 -30° 居中斜压在画面中间；底部半透明黑条写项目名称、时间（`YYYY-MM-DD HH:mm:ss` 本地时间）、经纬度（度分秒，如 `106°56′09″E 36°03′21″N`）、地址。
-  - 定位：GPS（WGS-84）→ 转 GCJ-02 → 逆地理编码。
+- **只填项目名称**：点取景下方信息条（或右上角“更多”里的改项目名称）输入，记住上次输入的，支持历史快速选。
+- **拍照**：9:16 全屏取景，拍照用原生相机预览（网页取景兜底），快门居中悬浮；一次拍一张，拍完预览，能删了重拍。照片同时存在 App 内相册列表和手机相册里，没网也能拍、存手机。点取景器对焦、上下滑调曝光（原生预览下双指捏合变焦）。
+- **水印（真烧进像素）**：GSZD 大号半透明白色，约 -30° 居中斜压在画面中间；底部半透明黑条写项目名称、时间（`YYYY-MM-DD HH:mm:ss` 本地时间）、经纬度（度分秒，如 `106°56′09″E 36°03′21″N`）、地址。斜水印透明度可在设置页滑块调（0.10–0.60，默认 0.20），取景实时预览，烧进照片和视频用同一数值。
+  - 定位：GPS（WGS-84）→ 转 GCJ-02 → 逆地理编码。定位只用浏览器 Geolocation，不依赖谷歌服务框架（v3.0.0 起不再用 `@capacitor/geolocation`，安装包里不再含 play-services-location，不会再提示启用谷歌框架）。
   - 地址只能来自逆地理编码服务返回的结果，拿不到就留空，绝不凭坐标编造。没网时地址留空，有网后打开页面会自动补上（后台持续定位）。相册页已取消「补地址」（v1.0.3，用户要求）。
   - 地址短格式：省＋市＋县区＋下一级（街道/小区等），如“甘肃省庆阳市西峰区南街街道”。
   - 定位三级兜底：高精度 → 普通定位（Wi-Fi/基站）→ 缓存位置；打开页面后后台持续监听，拍照时定位没完会等它完成再拍。
-  - 逆地理编码顺序：高德 restapi（需在相册页自填 Key，没有 Key 直接跳过，不写死假 Key）→ Nominatim（OpenStreetMap，无需 Key）。
+  - 逆地理编码顺序：高德 restapi（Key 已内置在 App 里，不用再填）→ Nominatim（OpenStreetMap，无需 Key）。
   - 照片最长边 >2400px 等比缩小，导出 JPEG 0.92。
 - **视频**：也要水印，同一版式，1080p（1920×1080 画布逐帧烧录后经 `canvas.captureStream + MediaRecorder` 录制），拍完能预览、能删，时长不限。输出为 webm（Chrome/WebView 的 MediaRecorder 原生格式；iOS 端如需 mp4 见下文“已知限制”）。
-- **相册列表**：按项目名分组，缩略图，点开大图/播放视频，单张删除、分享/导出。长按多选，拖进文件夹批量归档，多选模式里可批量删除（只删 App 内的，系统相册里的需手动删）。
+- **相册列表**：按项目名分组，缩略图，点开大图/播放视频，单张删除、分享/导出。长按多选，拖进文件夹批量归档，多选模式里可批量删除（只删 App 内的，系统相册里的需手动删）。顶部搜索框：按项目名称、地址、日期实时过滤（项目名称优先），不区分大小写；详情页左右滑动切换上一张/下一张。
 - **QQ 群自动上传：已砍掉**（QQ 没有官方接口能让第三方 App 自动同步到群里）。
 
 ## 技术栈
 
-Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 2.1.8。
+Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 3.0.0。
 
-- 相机：App 内 `getUserMedia` 实时取景（可叠加实时水印预览，所见即所得）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。镜头面板列出手机全部摄像头，可切换、调变焦；读不到时自动重试、打开面板重读、也可手动重读，实在读不到时按前后方向切换。
-- 定位：`@capacitor/geolocation`，失败回退浏览器 Geolocation。
+- 相机：拍照用 `@capacitor-community/camera-preview` 原生预览（toBack，WebView 背景透明，HTML 浮层在上；双指捏合变焦、前后切换、闪光灯走插件接口；录像仍走网页路线）；网页 `getUserMedia` 取景作兜底（镜头面板列出手机全部摄像头，可切换、调变焦；读不到时自动重试、打开面板重读、也可手动重读，实在读不到时按前后方向切换）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。
+- 定位：浏览器 `navigator.geolocation`（v3.0.0 起不再用 `@capacitor/geolocation`，安装包不再含谷歌服务定位）；定位权限走 WebView 首次调用时的系统弹窗，相机权限仍走原生侧；首次启动先定位、再相机，两个弹窗错开。
 - 存储：`@capacitor/filesystem`（`Directory.Data/works/`）+ localStorage 记录列表；相册保存用 `@capacitor-community/media`（走系统 MediaStore），失败时退到外部共享目录，再失败则只存 App 内并明确提示。
+- 版本信息：`src/version.js` 集中维护 version / versionCode / releaseDate，设置页显示当前版本、更新时间、联系邮箱；OTA 的 `version.json` 跟着版本同步更新。
+- OTA 自更新：`src/utils/ota.js` 从 Gitee（`https://gitee.com/alf1e/field-watermark-app`）raw 拉 `version.json`，远端 versionCode 更大时提示；下载 APK 到缓存目录后调系统安装器（`@jwot/capacitor-apkupdater`：安装前先查“安装未知应用”权限，没开先引导去设置开一次，只需开一次）。
 
 ## 目录结构
 
@@ -32,13 +34,17 @@ field-watermark-app/
 ├── src/
 │   ├── App.vue                  拍摄 / 相册 两个 Tab
 │   ├── main.js / style.css
+│   ├── version.js               集中版本信息（version / versionCode / releaseDate）
 │   ├── components/
-│   │   ├── CameraView.vue       拍摄主界面（取景、水印预览、拍照、录像、系统相机兜底）
-│   │   └── WorksList.vue        相册列表（分组、查看、删除、分享、高德 Key 设置）
+│   │   ├── CameraView.vue       拍摄主界面（全屏取景、原生预览、拍照、录像、系统相机兜底）
+│   │   ├── WorksList.vue        相册列表（搜索、分组、查看、删除、分享、设置）
+│   │   └── UpdatePrompt.vue     OTA 更新提示框（下载进度、安装权限引导）
 │   └── utils/
 │       ├── geo.js               WGS-84→GCJ-02、度分秒、时间格式、定位、逆地理编码
 │       ├── watermark.js         drawWatermark / burnPhotoWatermark / drawVideoFrame
-│       └── store.js             记录列表、App 内存储、相册保存、分享
+│       ├── store.js             记录列表、App 内存储、相册保存、分享
+│       ├── ota.js               OTA 检查 / 下载 / 安装（Gitee version.json + 安装权限）
+│       └── keyboard.js          输入法键盘高度跟踪、输入框光标移到末尾
 ├── scripts/
 │   ├── verify-watermark.mjs     自验：DMS、GCJ-02、水印绘制指令（15 项）
 │   ├── render-sample.mjs        真实像素渲染验证（需 node-canvas）
@@ -143,7 +149,7 @@ base64 -w0 field-watermark-release.keystore
 | `KEY_ALIAS` | `gszd`（和生成时 -alias 一致） |
 | `KEY_PASSWORD` | key 的密码（一般和 keystore 密码相同） |
 
-**工作流行为了如上**：`assembleDebug` 照常打（debug 包只进 artifact，供测试）；然后检查四个 Secrets，缺任何一个就**明确报错、整个构建失败，不悄悄回落到 debug 包**；齐全时打 `assembleRelease`，用 `apksigner` 签名并校验；Release 里只放签名后的 release 包（`长江现场水印相机v2.1.8.apk`）。另外工作流每次按 `major*10000+minor*100+patch` 自动算 `versionCode`（2.1.8 → 20108），商店更新要求 versionCode 递增，`cap add android` 每次都会把它重置成 1，不自动算就会被商店拒收更新。
+**工作流行为了如上**：`assembleDebug` 照常打（debug 包只进 artifact，供测试）；然后检查四个 Secrets，缺任何一个就**明确报错、整个构建失败，不悄悄回落到 debug 包**；齐全时打 `assembleRelease`，用 `apksigner` 签名并校验；Release 里只放签名后的 release 包（`长江现场水印相机v3.0.0.apk`）。另外工作流每次按 `major*10000+minor*100+patch` 自动算 `versionCode`（3.0.0 → 30000），商店更新要求 versionCode 递增，`cap add android` 每次都会把它重置成 1，不自动算就会被商店拒收更新。
 
 ### 上架物料
 
@@ -154,9 +160,25 @@ base64 -w0 field-watermark-release.keystore
 - 华为、小米、OPPO、vivo、应用宝：各家开发者账号（个人名义实名）+ 软件著作权（申请人写用户个人）+ 隐私政策在线链接。
 - 苹果 App Store：本次不做（用户已决定不交 99 美元/年开发者费，见 LIMS/现场水印 App 的分发记录）。
 
+## OTA 自更新（Gitee，v3.0.0）
+
+App 内自更新，不走应用商店：启动时自动检查一次，设置页也有“检查更新”按钮；从 Gitee raw 拉 `version.json`，远端 versionCode 更大时弹更新提示，点更新就下载 APK（带进度）后调系统安装器安装。
+
+- Gitee 仓库：`https://gitee.com/alf1e/field-watermark-app`（用户名是 alf1e，不是 GitHub 的 alf1ei）。
+- 检查地址：`https://gitee.com/alf1e/field-watermark-app/raw/main/version.json`；APK 下载地址按 Gitee 发行版附件格式：`https://gitee.com/alf1e/field-watermark-app/releases/download/v<版本号>/长江现场水印相机v<版本号>.apk`。
+- “允许安装未知应用”开关：安卓系统硬性要求，跳不过，但只用开一次。安装前 App 会先查这个权限，没开就弹引导，点“去设置开启”直接跳到本应用的设置页，打开开关回来就能装。
+
+### Gitee 那边还需要用户做的事（发版时同步做）
+
+1. 在 Gitee 建好上面这个仓库（公开），把 GitHub 仓库同步/镜像过去；
+2. 每次发版把新 APK 作为附件发到 Gitee 发行版（release），tag 是 `v<版本号>`；
+3. 更新仓库根目录的 `version.json`（version / versionCode / releaseDate / apkUrl / notes），versionCode 每次递增；
+4. 注意：`version.json` 和 `src/version.js` 里的版本号、versionCode、更新时间要保持一致。
+
 ## 已验证
 
-- `npm run verify`：15/15 通过。DMS：`106.9359, 36.0559 → 106°56′09″E / 36°03′21″N`；水印绘制指令：GSZD -30° 旋转、底部黑条、项目名/时间/经纬度/地址均已写入，地址为空时不编造；GCJ-02：天安门偏移约 555 米（正常量级），境外坐标不偏移。
+- `npm run verify`：77/77 通过。DMS：`106.9359, 36.0559 → 106°56′09″E / 36°03′21″N`；水印绘制指令：GSZD -30° 旋转、底部黑条、项目名/时间/经纬度/地址均已写入，地址为空时不编造；GCJ-02：天安门偏移约 555 米（正常量级），境外坐标不偏移；水印透明度默认 0.2（0.1–0.6 可调，越界夹取）。
+- `npm run verify:pwa`：203/203 通过（v3.0.0 全部新检查在内：原生相机预览、串行权限、OTA 安装权限引导、键盘避让、版本显示、相册搜索与滑动、去谷歌框架）。
 - 真实像素渲染：`scripts/render-sample.mjs`（node-canvas）输出样图 `scripts/sample-watermarked.jpg`，像素断言通过（底部黑条亮度 47、中央 GSZD 亮字 244）。
 - `vite build` 通过；`npx cap sync android` 通过（versionName 1.0.0、包名、权限清单均已核对）；APK 待权限放开后跑 `bash scripts/build-apk.sh` 打出，见上节。
 
@@ -167,6 +189,7 @@ base64 -w0 field-watermark-release.keystore
 - 视频水印实拍效果、长时间录制的发热/文件大小
 - iOS 真机：`getUserMedia` 在 WKWebView 里的表现、IPA 打包与 TestFlight
 - 不同安卓版本（尤其是 Android 14/15）的权限弹窗与分区存储行为
+- v3.0.0 新增（未真机验证）：原生相机预览（前后切换、闪光灯、双指捏合变焦手感）、OTA 下载安装与“安装未知应用”权限引导、Gitee raw 与发行版附件在国内网络下的可达性、相册搜索、浏览器定位在真机上是否还提示启用谷歌框架（v3.0.0 已去掉 Play 服务定位，理论上不再提示，需真机确认）
 
-## 图标说明（待补）
-定制图标 assets/icon.png / assets/splash.png（GSZD 蓝底白字）是二进制文件，未随本次云端打包快照推送；GitHub Actions 构建先用 Capacitor 默认图标打通出包，定制图标后续再替换回 android/ios 的 mipmap/AppIcon 资源后重打。
+## 图标说明
+App 图标是冰蓝色半透明浪花书法“长江”字 + 深蓝光圈泼墨底（assets/icon.png，1024×1024；自适应图标背景 assets/icon-background.png，深蓝 #001C40）。图标类文件是二进制，未随云端打包快照推送；GitHub Actions 构建时在 cap sync 之后跑 `npx @capacitor/assets generate --android`，从这两张图生成 Android 启动图标（mipmap ic_launcher / ic_launcher_foreground / ic_launcher_background）。

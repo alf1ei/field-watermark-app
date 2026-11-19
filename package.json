@@ -1,14 +1,16 @@
 {
   "dependencies": {
+    "@capacitor-community/camera-preview": "^7.0.5",
+    "@capacitor-community/file-opener": "^7.0.1",
     "@capacitor-community/media": "^8.0.1",
     "@capacitor/android": "^7.6.10",
     "@capacitor/app": "^7.0.2",
     "@capacitor/camera": "^7.0.2",
     "@capacitor/core": "^7.4.0",
     "@capacitor/filesystem": "^7.0.2",
-    "@capacitor/geolocation": "^7.1.4",
     "@capacitor/ios": "^7.6.10",
     "@capacitor/share": "^7.0.2",
+    "@jwot/capacitor-apkupdater": "^0.0.2",
     "vue": "^3.5.13"
   },
   "description": "长江现场水印相机 — 独立跨平台现场拍照 App（iOS + Android），GSZD 斜水印 + 时间/经纬度/地址，照片与视频均真烧录水印",
@@ -33,5 +35,5 @@
     "verify:pwa": "node scripts/verify-pwa.mjs"
   },
   "type": "module",
-  "version": "2.1.8"
+  "version": "3.0.0"
 }

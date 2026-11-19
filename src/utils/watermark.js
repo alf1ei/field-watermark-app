@@ -11,6 +11,14 @@ import { toDMS, formatTime } from './geo.js'
 export const MAX_EDGE = 2400
 export const JPEG_QUALITY = 0.92
 export const DEFAULT_WATERMARK_TEXT = 'GSZD'
+// 斜水印透明度默认值（v3.0.0：0.2，比原来的 0.26 更透；设置页滑块 0.1–0.6 可调）。
+// 注意：字号仍是画布宽的 0.26（v2.1.6 定下的大小不动），只有透明度可调。
+export const DEFAULT_WATERMARK_OPACITY = 0.2
+export function clampWatermarkOpacity(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return DEFAULT_WATERMARK_OPACITY
+  return Math.min(0.6, Math.max(0.1, n))
+}
 
 /**
  * 按目标宽高比对画面中心裁剪，返回源图上的裁剪矩形（纯函数，可单测）。
@@ -30,11 +38,13 @@ export function centerCropRect(srcW, srcH, ratio) {
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} w 画布宽
  * @param {number} h 画布高
- * @param {{project:string, time:string, lon:number|null, lat:number|null, address:string, watermarkText?:string}} meta
+ * @param {{project:string, time:string, lon:number|null, lat:number|null, address:string, watermarkText?:string, opacity?:number}} meta
+ *   opacity：斜水印透明度（0.1–0.6），不传用默认 0.2；字号固定是画布宽的 0.26。
  */
 export function drawWatermark(ctx, w, h, meta) {
   // ---- 斜水印：居中，-30°，大号淡白 ----
   const wmText = (meta.watermarkText || '').trim() || DEFAULT_WATERMARK_TEXT
+  const wmOpacity = clampWatermarkOpacity(meta.opacity)
   ctx.save()
   ctx.translate(w / 2, h / 2)
   ctx.rotate((-30 * Math.PI) / 180)
@@ -42,7 +52,7 @@ export function drawWatermark(ctx, w, h, meta) {
   ctx.font = `900 ${fontSize}px "Arial Black", Arial, sans-serif`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillStyle = 'rgba(255,255,255,0.26)'
+  ctx.fillStyle = `rgba(255,255,255,${wmOpacity})`
   ctx.fillText(wmText, 0, 0)
   ctx.restore()
 

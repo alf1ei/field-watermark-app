@@ -8,11 +8,13 @@
 import { Filesystem, Directory } from '@capacitor/filesystem'
 import { Capacitor } from '@capacitor/core'
 import { distMeters } from './geo.js'
+import { DEFAULT_WATERMARK_OPACITY, clampWatermarkOpacity } from './watermark.js'
 
 const LS_KEY = 'fw_records_v1'
 const LAST_PROJECT_KEY = 'fw_last_project'
 const HISTORY_KEY = 'fw_project_history'
 const WM_TEXT_KEY = 'fw_watermark_text'
+const WM_OPACITY_KEY = 'fw_watermark_opacity'
 const FOLDERS_KEY = 'fw_folders_v1'
 const PHOTO_FOLDER_KEY = 'fw_photo_folder_v1'
 const CONSENT_KEY = 'fw_privacy_consent_v1'
@@ -41,6 +43,23 @@ export function setWatermarkText(text) {
     localStorage.setItem(WM_TEXT_KEY, (text || '').trim())
     window.dispatchEvent(new Event('fw-settings-changed'))
   } catch { /* ignore */ }
+}
+
+/** 斜水印透明度（v3.0.0）：设置页滑块 0.1–0.6，默认 0.2；改后实时影响预览和新拍照片/视频 */
+export function getWatermarkOpacity() {
+  try {
+    const raw = localStorage.getItem(WM_OPACITY_KEY)
+    if (raw == null || raw === '') return DEFAULT_WATERMARK_OPACITY
+    return clampWatermarkOpacity(raw)
+  } catch { return DEFAULT_WATERMARK_OPACITY }
+}
+export function setWatermarkOpacity(value) {
+  const v = clampWatermarkOpacity(value)
+  try {
+    localStorage.setItem(WM_OPACITY_KEY, String(v))
+    window.dispatchEvent(new Event('fw-settings-changed'))
+  } catch { /* ignore */ }
+  return v
 }
 
 export function loadRecords() {

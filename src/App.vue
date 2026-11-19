@@ -41,6 +41,8 @@
     <!-- 首次启动隐私同意页：还没选过就弹；同意/不同意都记下来，下次不再弹 -->
     <PrivacyConsent v-if="showConsent" @accept="onConsentAccept" @decline="onConsentDecline" />
     <PolicyViewer v-if="policyDoc" :doc="policyDoc" @close="policyDoc = null" />
+    <!-- OTA 更新提示（启动检查发现新版本时弹） -->
+    <UpdatePrompt v-if="launchUpdate" :remote="launchUpdate" @close="launchUpdate = null" />
   </div>
 </template>
 
@@ -53,7 +55,9 @@ import CameraView from './components/CameraView.vue'
 import WorksList from './components/WorksList.vue'
 import PrivacyConsent from './components/PrivacyConsent.vue'
 import PolicyViewer from './components/PolicyViewer.vue'
+import UpdatePrompt from './components/UpdatePrompt.vue'
 import { loadRecords, getPrivacyConsent, setPrivacyConsent } from './utils/store.js'
+import { checkForUpdate } from './utils/ota.js'
 
 const tab = ref('shoot')
 const camRef = ref(null)
@@ -66,10 +70,24 @@ const count = ref(loadRecords().length)
 const consent = ref(getPrivacyConsent())
 const showConsent = ref(consent.value == null)
 const policyDoc = ref(null)
+// OTA 启动检查发现的新版本（有值时弹更新提示框；无网/没新版时一直是 null，不打扰）
+const launchUpdate = ref(null)
 function onConsentAccept() {
   setPrivacyConsent('accepted')
   consent.value = 'accepted'
   showConsent.value = false
+  checkUpdateOnLaunch()
+}
+// OTA 启动检查（v3.0.0）：启动 2 秒后查一次，有新版本才弹提示；
+// 没网/拉不到/没新版都静默跳过。只在已同意隐私（相机已启用）时做，
+// 首次启动还没点同意时不弹，避免和同意页叠在一起。
+function checkUpdateOnLaunch() {
+  setTimeout(async () => {
+    try {
+      const res = await checkForUpdate()
+      if (res.available && res.remote) launchUpdate.value = res.remote
+    } catch { /* 静默跳过 */ }
+  }, 2000)
 }
 function onConsentDecline() {
   setPrivacyConsent('declined')
@@ -139,6 +157,8 @@ onMounted(() => {
   if (Capacitor.isNativePlatform()) {
     try { backHandle = App.addListener('backButton', onBackButton) } catch { /* ignore */ }
   }
+  // 已同意过隐私才做启动 OTA 检查（没点过同意的，等用户点了同意后再查）
+  if (consent.value === 'accepted') checkUpdateOnLaunch()
   try { if (localStorage.getItem('fw_a2hs_dismissed')) return } catch { /* ignore */ }
   const ua = navigator.userAgent || ''
   const isIOS = /iPhone|iPad|iPod/.test(ua)

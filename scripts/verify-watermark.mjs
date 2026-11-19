@@ -9,9 +9,9 @@
  * 另见 README 的真机验证清单。带 --render 时若装了 node-canvas 会额外出一张真实水印样图。
  */
 import { toDMS, wgs84ToGcj02, gcj02ToWgs84, formatTime, normalizeTimeText, withTimeout, isPermissionDenied, saveLastFix, loadLastFix, getCachedAddress, saveCachedAddress, distMeters, getPosition, reverseGeocode } from '../src/utils/geo.js'
-import { drawWatermark, centerCropRect } from '../src/utils/watermark.js'
+import { drawWatermark, centerCropRect, DEFAULT_WATERMARK_OPACITY, clampWatermarkOpacity } from '../src/utils/watermark.js'
 import { pushBackOverlay, removeBackOverlay, popBackOverlay, backOverlayCount, clearBackOverlays } from '../src/utils/backstack.js'
-import { backfillRecordsAddress, setPhotoFolder, getPhotoFolderMap, getPhotoFolder, getPrivacyConsent, setPrivacyConsent } from '../src/utils/store.js'
+import { backfillRecordsAddress, setPhotoFolder, getPhotoFolderMap, getPhotoFolder, getPrivacyConsent, setPrivacyConsent, getWatermarkOpacity, setWatermarkOpacity } from '../src/utils/store.js'
 
 let pass = 0, fail = 0
 function check(name, ok, extra = '') {
@@ -258,16 +258,32 @@ console.log('10) 多选批量移进文件夹 setPhotoFolder')
   }
 }
 
-// ---------- 11. v2.1.6：水印 0.26 大小 / 0.26 透明度 + 编辑时间归一化 ----------
-// 用户明确要求：GSZD 水印大一点、更透一点，和演示版一致（之前源码一直是 0.22/0.35）。
-console.log('11) v2.1.6 水印 0.26/0.26 + normalizeTimeText')
+// ---------- 11. v3.0.0：水印字号仍 0.26，透明度默认改 0.2（可调 0.1–0.6）+ 编辑时间归一化 ----------
+// 用户明确要求：默认比 0.26 更透（0.2），设置页滑块可调；字号仍是画布宽的 0.26 不动。
+console.log('11) v3.0.0 水印字号 0.26 / 透明度默认 0.2 + normalizeTimeText')
 {
   const ctx5 = mockCtx()
   drawWatermark(ctx5, 1920, 1080, meta)
   const fonts5 = ctx5.calls.filter((c) => c[0] === 'font').map((c) => c[1])
   const styles5 = ctx5.calls.filter((c) => c[0] === 'fillStyle').map((c) => c[1])
   check('斜水印字号是画布宽的 0.26（1920 → 499px）', fonts5.some((f) => f.includes('499px')), fonts5[0])
-  check('斜水印透明度是 0.26（更透）', styles5.includes('rgba(255,255,255,0.26)'), styles5[0])
+  check('斜水印透明度默认是 0.2（更透）', styles5.includes('rgba(255,255,255,0.2)'), styles5[0])
+  // 透明度参数：传了就用传的，越界夹到 0.1–0.6
+  const ctx6 = mockCtx()
+  drawWatermark(ctx6, 1920, 1080, { ...meta, opacity: 0.4 })
+  const styles6 = ctx6.calls.filter((c) => c[0] === 'fillStyle').map((c) => c[1])
+  check('meta.opacity=0.4 时按 0.4 烧水印', styles6.includes('rgba(255,255,255,0.4)'), styles6[0])
+  const ctx7 = mockCtx()
+  drawWatermark(ctx7, 1920, 1080, { ...meta, opacity: 0.9 })
+  const styles7 = ctx7.calls.filter((c) => c[0] === 'fillStyle').map((c) => c[1])
+  check('meta.opacity=0.9 越界夹到 0.6', styles7.includes('rgba(255,255,255,0.6)'), styles7[0])
+  const ctx8 = mockCtx()
+  drawWatermark(ctx8, 1920, 1080, { ...meta, opacity: 0.05 })
+  const styles8 = ctx8.calls.filter((c) => c[0] === 'fillStyle').map((c) => c[1])
+  check('meta.opacity=0.05 越界夹到 0.1', styles8.includes('rgba(255,255,255,0.1)'), styles8[0])
+  check('clampWatermarkOpacity：越界夹取', clampWatermarkOpacity(0.9) === 0.6 && clampWatermarkOpacity(0.05) === 0.1)
+  check('clampWatermarkOpacity：非法值回默认 0.2', clampWatermarkOpacity('abc') === 0.2 && clampWatermarkOpacity(undefined) === 0.2)
+  check('DEFAULT_WATERMARK_OPACITY 是 0.2', DEFAULT_WATERMARK_OPACITY === 0.2)
   check('normalizeTimeText：datetime-local 带 T 转空格', normalizeTimeText('2026-11-16T10:20:30') === '2026-11-16 10:20:30')
   check('normalizeTimeText：已有空格格式原样通过', normalizeTimeText('2026-11-16 10:20:30') === '2026-11-16 10:20:30')
   check('normalizeTimeText：缺秒补 00', normalizeTimeText('2026-11-16T10:20') === '2026-11-16 10:20:00')
@@ -299,6 +315,30 @@ console.log('12) v2.1.8 隐私同意状态 getPrivacyConsent/setPrivacyConsent')
     else globalThis.localStorage = origLocalStorage
   }
   check('无 localStorage 时 getPrivacyConsent 返回 null 不抛错', getPrivacyConsent() === null)
+}
+
+// ---------- 13. v3.0.0：水印透明度存取 getWatermarkOpacity/setWatermarkOpacity ----------
+// 默认 0.2，存 localStorage fw_watermark_opacity，越界夹到 0.1–0.6；无 localStorage 时返回默认不抛错。
+console.log('13) v3.0.0 水印透明度存取 getWatermarkOpacity/setWatermarkOpacity')
+{
+  const origLocalStorage = globalThis.localStorage
+  const memStore = new Map()
+  globalThis.localStorage = {
+    getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+    setItem: (k, v) => { memStore.set(k, String(v)) },
+    removeItem: (k) => { memStore.delete(k) }
+  }
+  try {
+    check('没存过时默认 0.2', getWatermarkOpacity() === 0.2)
+    check('set 返回夹取后的值并读到', setWatermarkOpacity(0.35) === 0.35 && getWatermarkOpacity() === 0.35)
+    check('存进 fw_watermark_opacity 这个 key', memStore.get('fw_watermark_opacity') === '0.35')
+    check('set 越界夹到 0.6', setWatermarkOpacity(0.9) === 0.6 && getWatermarkOpacity() === 0.6)
+    check('set 越界夹到 0.1', setWatermarkOpacity(0.01) === 0.1 && getWatermarkOpacity() === 0.1)
+  } finally {
+    if (origLocalStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = origLocalStorage
+  }
+  check('无 localStorage 时 getWatermarkOpacity 返回默认 0.2 不抛错', getWatermarkOpacity() === 0.2)
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败`)

@@ -90,12 +90,12 @@ export function normalizeTimeText(s) {
   return formatTime(dt)
 }
 
-// ---- 定位 ----
-// 策略（2026-11-16 用户反馈：个别手机一次高精度定位拿不到）：
+// ---- 定位（v3.0.0：只走浏览器 navigator.geolocation，不再用 @capacitor/geolocation——
+// 后者安卓走 Google Play 服务定位（FusedLocationProvider），会把 play-services-location
+// 打进安装包，手机提示启用谷歌框架；浏览器定位不依赖谷歌框架，国内安卓同样能用）：
 // 高精度 → 普通精度（Wi-Fi/基站）→ 缓存位置，三级兜底，不只试一次就放弃。
-// 关键：原生端 Capacitor 的 getCurrentPosition 不保证执行 timeout（
-// 安卓上 timeout 只用作 watch 的更新间隔），室内等不到 GPS 时会永远挂起；
-// 所以每一级都包一层手动超时（Promise.race），绝不无限等。
+// 关键：navigator.geolocation 的 timeout 在部分 WebView 上不保证执行，
+// 室内等不到 GPS 时会挂起；所以每一级都包一层手动超时（Promise.race），绝不无限等。
 
 // 通用超时包装：promise 在 ms 内没结果就拒绝（code 为 'TIMEOUT'）。
 // 超时后底层请求若稍后才成功，其结果会被丢弃（调用方负责关掉多余的流/监听）。
@@ -164,37 +164,29 @@ export function saveCachedAddress(gcjLon, gcjLat, address) {
   } catch { /* ignore */ }
 }
 
-// 显式要定位权限：原生端没授权时会弹系统授权框；已拒绝返回 denied，
-// 直接报清楚（不再往下试）；网页端 requestPermissions 未实现会抛错，直接忽略继续试。
-// 权限框是用户点按的，最多等 30 秒，超时也不阻塞后续定位尝试。
-async function ensureLocationPermission() {
-  let Geolocation
+// 显式看一眼定位权限状态（v3.0.0：不再调 Capacitor 的 requestPermissions）：
+//  - 已拒绝 → 直接报 LOC_DENIED（不再往下试，也不再弹框）；
+//  - 未决定 → 返回，让接下来的 getCurrentPosition 触发 WebView 首次调用时的系统弹框；
+//  - Permissions API 不可用（部分 WebView）→ 直接返回，同样交给 getCurrentPosition 弹框。
+// 注意：这里只“看”不“要”，真正的系统弹框发生在第一次 getCurrentPosition 调用时。
+export async function ensureLocationPermission() {
   try {
-    ({ Geolocation } = await import('@capacitor/geolocation'))
-  } catch { return }
-  if (!Geolocation || typeof Geolocation.requestPermissions !== 'function') return
-  let status = null
-  try {
-    status = await withTimeout(Geolocation.requestPermissions(), 30000, '请求定位权限')
-  } catch { return }
-  const locState = status && status.location
-  const coarseState = status && status.coarseLocation
-  if (locState === 'denied' && coarseState !== 'granted') {
-    const err = new Error('定位权限被拒绝')
-    err.code = 'LOC_DENIED'
-    throw err
+    if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
+      const st = await navigator.permissions.query({ name: 'geolocation' })
+      if (st && st.state === 'denied') {
+        const err = new Error('定位权限被拒绝')
+        err.code = 'LOC_DENIED'
+        throw err
+      }
+    }
+  } catch (e) {
+    if (e && e.code === 'LOC_DENIED') throw e
+    // Permissions API 不可用/不支持该名称：忽略，交给 getCurrentPosition 时的系统弹框
   }
 }
 
-function capacitorPosition(opts) {
-  return import('@capacitor/geolocation').then(({ Geolocation }) =>
-    Geolocation.getCurrentPosition(opts).then((pos) => ({
-      lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'capacitor'
-    }))
-  )
-}
 function browserPosition(opts) {
-  if (!navigator.geolocation) throw new Error('当前环境不支持定位')
+  if (typeof navigator === 'undefined' || !navigator.geolocation) throw new Error('当前环境不支持定位')
   return new Promise((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(
       (pos) => resolve({ lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'browser' }),
@@ -203,17 +195,9 @@ function browserPosition(opts) {
     )
   })
 }
-// 单级定位：先走 Capacitor（真机原生定位），包一层手动超时；
-// 原生端超时不回退浏览器（同个 provider 也会卡），交给下一级兜底；
-// Capacitor 快速失败时回退浏览器 API（网页版走的就是它）。
+// 单级定位：浏览器 API + 手动超时（WebView 上 timeout 不保证执行，绝不无限等）。
 async function tryPosition(opts, ms) {
-  try {
-    return await withTimeout(capacitorPosition(opts), ms, '定位')
-  } catch (e) {
-    if (e && e.code === 'TIMEOUT') throw e
-    if (isPermissionDenied(e)) throw e
-    return await withTimeout(browserPosition(opts), ms, '定位')
-  }
+  return await withTimeout(browserPosition(opts), ms, '定位')
 }
 
 export async function getPosition(onRefine) {
@@ -254,46 +238,28 @@ export async function getPosition(onRefine) {
 }
 
 // 后台持续监听：GPS 热起来后自动补上经纬度/地址。返回停止函数。
-// 优先 Capacitor watchPosition（真机/网页都可用）；原生监听 20 秒还不出位置
-//（如室内 GPS 迟迟不定）时，再开一路浏览器监听补网络定位；原生监听报错时也一样。
+// 只走浏览器 watchPosition（v3.0.0 起不再用 Capacitor watchPosition，不依赖谷歌框架）。
 export function watchPosition(onUpdate, onError) {
   const opts = { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
   let stopped = false
-  let gotFix = false
-  let stopCap = null
   let watchId = null
-  let watchdog = null
-  const emit = (lon, lat, accuracy, source) => {
-    gotFix = true
-    try { onUpdate({ lon, lat, accuracy, source }) } catch { /* 回调异常不中断监听 */ }
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    if (typeof onError === 'function') {
+      try { onError(new Error('当前环境不支持定位')) } catch { /* ignore */ }
+    }
+    return () => {}
   }
-  const startBrowserWatch = () => {
-    if (stopped || !navigator.geolocation || watchId != null) return
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => emit(pos.coords.longitude, pos.coords.latitude, pos.coords.accuracy, 'browser'),
-      (err) => { if (onError) onError(err) },
-      opts
-    )
-  }
-  import('@capacitor/geolocation').then(({ Geolocation }) =>
-    Geolocation.watchPosition(opts, (pos, err) => {
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
       if (stopped) return
-      if (err) {
-        startBrowserWatch()
-        if (onError) onError(err)
-        return
-      }
-      if (pos) emit(pos.coords.longitude, pos.coords.latitude, pos.coords.accuracy, 'capacitor')
-    }).then((id) => { stopCap = id }).catch(startBrowserWatch)
-  ).catch(startBrowserWatch)
-  watchdog = setTimeout(() => { if (!stopped && !gotFix) startBrowserWatch() }, 20000)
+      try { onUpdate({ lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy, source: 'browser' }) } catch { /* 回调异常不中断监听 */ }
+    },
+    (err) => { if (!stopped && onError) onError(err) },
+    opts
+  )
   return () => {
     stopped = true
-    if (watchdog) clearTimeout(watchdog)
     if (watchId != null && navigator.geolocation) navigator.geolocation.clearWatch(watchId)
-    if (stopCap != null) {
-      import('@capacitor/geolocation').then(({ Geolocation }) => Geolocation.clearWatch({ id: stopCap })).catch(() => {})
-    }
   }
 }
 
@@ -347,9 +313,11 @@ export function formatNominatimAddress(j) {
   }
   return ''
 }
-// 高德 Key 由使用者在设置里自填，存在 localStorage；没有 Key 时直接跳过，不写死假 Key。
+// 高德 Key（v3.0.0 起内置）：用户提供的 Web 服务 Key，写在 geo 模块这一个配置处，
+// 不写进 README 或任何文档。之前在设置里自填过 Key 的用户，填过的仍优先用。
+const EMBEDDED_AMAP_KEY = 'e80e0ddc2ad2bd51a19f2d0132983391'
 export function getAmapKey() {
-  try { return localStorage.getItem('fw_amap_key') || '' } catch { return '' }
+  try { return localStorage.getItem('fw_amap_key') || EMBEDDED_AMAP_KEY } catch { return EMBEDDED_AMAP_KEY }
 }
 export function setAmapKey(key) {
   try { localStorage.setItem('fw_amap_key', (key || '').trim()) } catch { /* ignore */ }

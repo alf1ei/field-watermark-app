@@ -1,1 +1,1 @@
-{"android": {"allowMixedContent": false}, "appId": "com.gszd.fieldwatermark", "appName": "长江现场水印相机", "ios": {"contentInset": "always"}, "plugins": {"Camera": {"permissions": ["camera", "photos"]}, "Geolocation": {"permissions": ["location"]}}, "server": {"androidScheme": "https"}, "webDir": "dist"}
+{"android":{"allowMixedContent":false},"appId":"com.gszd.fieldwatermark","appName":"长江现场水印相机","ios":{"contentInset":"always"},"plugins":{"Camera":{"permissions":["camera","photos"]}},"server":{"androidScheme":"https"},"webDir":"dist"}
