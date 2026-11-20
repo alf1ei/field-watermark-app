@@ -1,7 +1,10 @@
 /**
  * OTA 更新（v3.0.0，Gitee 方案）：
- *  - 检查：启动时一次 + 设置页“检查更新”按钮；从 Gitee raw 拉 version.json，
- *    远端 versionCode 大于本地才提示更新。
+ *  - 检查：启动时一次 + 设置页“检查更新”按钮；先从 Gitee raw 拉 version.json，
+ *    远端 versionCode 大于本地才提示更新。Gitee raw 不稳定（实测一次 25 秒无响应、
+ *    一次 302 跳转后 3.25 秒才拿到内容），所以每次尝试 15 秒超时，Gitee 失败/超时/
+ *    格式不对就改拉 GitHub raw 备用；两条都失败再按同样顺序（Gitee → GitHub）
+ *    重试一轮，最多 4 次尝试，第一次成功立即返回。
  *  - 安装：下载 APK 到缓存目录（@capacitor/filesystem），再调系统安装器。
  *    只在安卓原生端走这条路：iOS 没有侧载安装，网页版/PWA 请刷新页面更新。
  *  - 无网络时静默跳过（不弹、不报错）；下载失败给提示 + 手动下载说明。
@@ -26,32 +29,53 @@ import { APP_VERSION } from '../version.js'
 export const OTA_GITEE_REPO = 'https://gitee.com/alf1e/field-watermark-app'
 // version.json 的 raw 地址（main 分支根目录）
 export const OTA_VERSION_URL = `${OTA_GITEE_REPO}/raw/main/version.json`
+// version.json 的 GitHub raw 备用地址（Gitee raw 不稳定时用；用户名是 alf1ei）
+export const OTA_VERSION_URL_GITHUB = 'https://raw.githubusercontent.com/alf1ei/field-watermark-app/main/version.json'
 // APK 下载地址（Gitee 发行版附件格式）
 export function otaApkUrl(version) {
   return `${OTA_GITEE_REPO}/releases/download/v${version}/长江现场水印相机v${version}.apk`
 }
 
-/** 拉远端 version.json（10 秒超时）。返回解析后的对象，失败抛错。 */
+/**
+ * 拉远端 version.json（每次尝试 15 秒超时）。
+ * 顺序：Gitee → GitHub 备用；两条都失败再按同样顺序重试一轮，最多 4 次尝试，
+ * 第一次成功立即返回。每次拿到响应都校验格式（必须有 version 字符串和
+ * 数字 versionCode），校验不过算这次失败、继续试下一个 URL，不直接抛错。
+ * 全部失败才抛错（抛最后一次的错，调用方按“没网”静默跳过）。
+ * 返回 { version, versionCode, releaseDate, apkUrl, notes }，apkUrl 缺失时
+ * 用 otaApkUrl(j.version) 补。
+ */
 export async function fetchRemoteVersion() {
-  const ctrl = new AbortController()
-  const t = setTimeout(() => ctrl.abort(), 10000)
-  try {
-    const res = await fetch(OTA_VERSION_URL, { signal: ctrl.signal, cache: 'no-store' })
-    if (!res.ok) throw new Error('检查更新失败：HTTP ' + res.status)
-    const j = await res.json()
-    if (!j || typeof j.versionCode !== 'number' || !j.version) {
-      throw new Error('version.json 格式不对（缺 version / versionCode）')
+  const urls = [OTA_VERSION_URL, OTA_VERSION_URL_GITHUB]
+  let lastError = null
+  for (let round = 0; round < 2; round++) {
+    for (const url of urls) {
+      // 每轮每次都新建 controller，不复用已 abort 的
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 15000)
+      try {
+        const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' })
+        if (!res.ok) throw new Error('检查更新失败：HTTP ' + res.status)
+        const j = await res.json()
+        if (!j || typeof j.versionCode !== 'number' || !j.version) {
+          throw new Error('version.json 格式不对（缺 version / versionCode）')
+        }
+        return {
+          version: String(j.version),
+          versionCode: j.versionCode,
+          releaseDate: j.releaseDate || '',
+          apkUrl: j.apkUrl || otaApkUrl(j.version),
+          notes: j.notes || ''
+        }
+      } catch (e) {
+        lastError = e
+        // 这次失败，继续试下一个 URL（或下一轮）
+      } finally {
+        clearTimeout(t)
+      }
     }
-    return {
-      version: String(j.version),
-      versionCode: j.versionCode,
-      releaseDate: j.releaseDate || '',
-      apkUrl: j.apkUrl || otaApkUrl(j.version),
-      notes: j.notes || ''
-    }
-  } finally {
-    clearTimeout(t)
   }
+  throw lastError || new Error('检查更新失败：拉不到 version.json')
 }
 
 /**

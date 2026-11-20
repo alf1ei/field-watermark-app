@@ -103,14 +103,30 @@ function loadImage(src) {
 }
 
 /**
+ * 把一块 canvas 缩成 320px 以内的缩略图 dataURL（v3.0.3：复用烧水印那块 canvas，
+ * 不重新解码整图；只在小图上做一次 toDataURL，成本可忽略）。
+ */
+export function canvasToThumbDataUrl(canvas) {
+  const k = Math.min(1, 320 / Math.max(canvas.width, canvas.height))
+  const c = document.createElement('canvas')
+  c.width = Math.max(1, Math.round(canvas.width * k))
+  c.height = Math.max(1, Math.round(canvas.height * k))
+  c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height)
+  return c.toDataURL('image/jpeg', 0.8)
+}
+
+/**
  * 把一张照片烧上水印，返回 JPEG Blob。
  * 最长边 >2400px 时等比缩小，导出 JPEG 0.92。
  * 传 ratio（宽/高，如 3:4 竖版 = 0.75）时先对画面中心裁剪到该比例再烧水印。
  * @param {string} src 图片 dataURL / blobURL / http(s) 地址
  * @param {object} meta 同 drawWatermark
  * @param {number} [ratio] 目标宽高比，不传则保持原图比例
- * @returns {Promise<{blob:Blob, dataUrl:string, rawDataUrl:string, width:number, height:number}>}
- *   rawDataUrl 是烧水印之前的无水印原图（已按 ratio 裁剪、已缩放），供详情页编辑文字时重烧用
+ * @returns {Promise<{blob:Blob, rawBlob:Blob|null, thumb:string, width:number, height:number}>}
+ *   blob 是烧好水印的成品；rawBlob 是烧水印之前的无水印原图（已按 ratio 裁剪、已缩放，
+ *   直接是 Blob，供详情页编辑文字时重烧用）；thumb 是同一块 canvas 顺手出的 320px 缩略图。
+ *   v3.0.3：整图 JPEG 编码从 3 次减到 2 次（rawDataUrl / dataUrl 两次 toDataURL 已砍掉，
+ *   不再返回它们；调用方用 rawBlob 存原图、用 thumb 做缩略图、用 URL.createObjectURL(blob) 展示）。
  */
 export async function burnPhotoWatermark(src, meta, ratio) {
   const img = await loadImage(src)
@@ -129,10 +145,12 @@ export async function burnPhotoWatermark(src, meta, ratio) {
   canvas.width = w; canvas.height = h
   const ctx = canvas.getContext('2d')
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h)
-  // 烧水印之前的画面就是无水印原图：先留一份 rawDataUrl，供详情页 7 次点击编辑文字时重烧
-  const rawDataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+  // 烧水印之前的画面就是无水印原图：先留一份 Blob，供详情页 7 次点击编辑文字时重烧
+  const rawBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
   drawWatermark(ctx, w, h, meta)
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
   if (!blob) throw new Error('水印导出失败')
-  return { blob, dataUrl: canvas.toDataURL('image/jpeg', JPEG_QUALITY), rawDataUrl, width: w, height: h }
+  // 缩略图复用同一块 canvas，不重新解码整图
+  const thumb = canvasToThumbDataUrl(canvas)
+  return { blob, rawBlob, thumb, width: w, height: h }
 }

@@ -6,14 +6,27 @@
        这条固定色带从屏幕最顶端（y=0）盖住安全区，和顶栏同色 #0b1220；
        切到相册时 .cam-page display:none，连它一起藏起来；不挡点击。 -->
   <div class="top-fill" aria-hidden="true"></div>
-  <!-- 顶部：项目名称（老版样式，点一下改名）+ 四个控制按钮（黑色毛玻璃椭圆钮，不悬浮在取景上） -->
+  <!-- 顶部：项目名称（v3.0.3：直接在顶栏输入框里改，不再弹确认框；输入实时显示，
+       字太多时前面藏进去、只看正在输入的尾部；点右边小箭头弹出最近项目快速选）+ 四个控制按钮 -->
   <div class="topbar">
     <div class="project-row">
       <span class="project-label">项目名称</span>
-      <button class="project-box" @click="openProjectEdit" title="点一下改项目名称">
-        <span class="project-name">{{ project || '（未填）' }}</span>
-        <svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
+      <div class="project-field">
+        <div class="project-box">
+          <input ref="projectInput" v-model="project" placeholder="输入项目名称" enterkeyhint="done"
+            @focus="onProjectInputFocus" @input="onProjectTyping" @blur="onProjectInputBlur" @keyup.enter="commitProjectAndBlur" />
+          <button class="project-chev" @click="toggleHistoryDropdown" title="最近项目" aria-label="最近项目">
+            <svg class="chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M2 4l4 4 4-4" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <div v-if="historyOpen && history.length" class="project-history">
+          <div class="project-history-title">最近项目</div>
+          <button v-for="h in history.slice(0, 5)" :key="h" class="project-history-item" @click="pickHistory(h)">
+            <svg class="hist-clock" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>{{ h }}</span>
+          </button>
+        </div>
+      </div>
     </div>
     <div class="ctrl-row">
       <button class="ctrl-btn" @click="openSettings" title="菜单：打开设置" aria-label="菜单">
@@ -34,7 +47,8 @@
   </div>
   <div class="stage" ref="stageEl"
     @pointerdown="onStagePointerDown" @pointermove="onStagePointerMove" @pointerup="onStagePointerUp" @pointercancel="onStagePointerCancel">
-    <div class="cam-wrap" :style="camWrapStyle">
+    <div class="cam-wrap" ref="camWrapEl" :style="camWrapStyle">
+    <!-- 快门白闪（v3.0.3 提速）：点快门立刻闪一下，不等任何步骤，体感上一点就有反应 -->
     <!-- 网页取景（录像模式 / PWA / 原生预览的网页兜底）；原生拍照预览时隐藏，画面在 WebView 之后 -->
     <video v-show="camOk && !nativeActive" ref="videoEl" autoplay muted playsinline></video>
     <div v-if="camOk" class="wm-overlay" :style="{ '--wm-opacity': wmOpacity }">
@@ -51,9 +65,7 @@
         <div v-else class="bar-mini">项目名称：{{ project || '（未填）' }} · 点一下展开信息</div>
       </div>
     </div>
-    <!-- 裁剪框提示：所选比例与 3:4 取景框不一致时，在取景里画出对应比例的保留区域（虚线框）；
-         拍照仍按 centerCropRect 对画面中心裁剪 -->
-    <div v-if="camOk && cropGuide" class="crop-guide" :style="cropGuideStyle"><span class="crop-label">{{ ratio }} 裁剪框</span></div>
+    <!-- 取景框就是成片框（v3.0.3 所见即所得）：cam-wrap 跟随所选比例，不再画裁剪框提示 -->
     <div v-if="recording" class="rec-chip">● {{ recTimeText }}</div>
     <div v-if="focusBox" class="focus-box" :style="{ left: focusBox.x + 'px', top: focusBox.y + 'px' }"></div>
     <div v-if="expIndicator" class="exp-indicator">☀ {{ expText }}</div>
@@ -75,9 +87,10 @@
       </div>
       <input ref="videoFileInput" type="file" accept="video/*" capture="environment" style="display:none" @change="onVideoFilePicked" />
     </div>
+    <div v-if="shutterFlash" class="shutter-flash" aria-hidden="true"></div>
     </div>
-    <!-- 定位状态浮条：只在定位中 / 定位出错时显示，点一下改项目名称；定位就绪后隐藏（坐标看底部信息条） -->
-    <div v-if="locBusy || locError" class="hint" :class="{ err: locError }" @click="openProjectEdit" title="点一下改项目名称">{{ locHint }}</div>
+    <!-- 定位状态浮条：只在定位中 / 定位出错时显示，点一下聚焦顶栏项目名输入框；定位就绪后隐藏（坐标看底部信息条） -->
+    <div v-if="locBusy || locError" class="hint" :class="{ err: locError }" @click="focusProjectInput" title="点一下改项目名称">{{ locHint }}</div>
   </div>
   <!-- 底部控制区：模式药丸 + 快门行（不在取景上悬浮；药丸与快门同一条竖直中线） -->
   <div class="bottom-ctrl">
@@ -122,7 +135,7 @@
       <div class="pick-row">
         <button v-for="r in RATIO_OPTIONS" :key="r.label" :class="{ active: ratio === r.label }" @click="setRatio(r.label); showRatioPanel = false">{{ r.label }}</button>
       </div>
-      <div class="field-desc">默认 3:4；取景框固定 3:4，拍照按所选比例中心裁剪；选 9:16 / 1:1 时取景里显示裁剪框提示。</div>
+      <div class="field-desc">默认 3:4；取景框跟随所选比例，成片与取景一致，所见即所得，不裁切。</div>
     </div>
   </div>
 
@@ -145,21 +158,6 @@
         <button class="ghost" @click="listCameras(true)">重新读取</button>
       </div>
       <div class="field-desc">iPhone 网页版只给前/后两个摄像头，长焦/超广角苹果不开放给网页，想用长焦请用“系统相机”。</div>
-    </div>
-  </div>
-
-  <!-- 改项目名称：常驻 DOM（靠透明度隐藏），点信息条/定位提示/更多菜单时在点击手势内同步聚焦，直接弹输入法。
-       v3.0.0 键盘避让：输入法弹起时整张弹层按键盘高度上移（--kb 来自 visualViewport），输入框不被键盘盖住；
-       顶部的实时同步行显示完整项目名（输入框只负责显示尾部和光标，获得焦点时光标移到文字最后）。 -->
-  <div class="edit-sheet" :class="{ open: editSheet }" :style="{ '--kb': kbHeight + 'px' }" @click.self="editSheet = false">
-    <div class="sheet">
-      <div class="sheet-head"><h2>项目名称</h2><button class="sheet-close" @click="editSheet = false">✕</button></div>
-      <div class="live-preview">项目名称：<b>{{ editProject || '（未填）' }}</b></div>
-      <div class="field-row">
-        <input ref="editInput" v-model="editProject" placeholder="输入项目名称" enterkeyhint="done" @focus="onEditInputFocus" @keyup.enter="saveProjectEdit" />
-      </div>
-      <div style="height:12px"></div>
-      <button class="primary wide" @click="saveProjectEdit">保存</button>
     </div>
   </div>
 
@@ -187,16 +185,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { Capacitor } from '@capacitor/core'
+import { Filesystem, Directory } from '@capacitor/filesystem'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { CameraPreview } from '@capacitor-community/camera-preview'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
 import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters, loadLastFix } from '../utils/geo.js'
-import { drawWatermark, drawVideoFrame, burnPhotoWatermark, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
+import { drawWatermark, drawVideoFrame, burnPhotoWatermark, canvasToThumbDataUrl, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
 import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, getWatermarkOpacity, deleteAppFile, backfillRecordsAddress } from '../utils/store.js'
-import { useKeyboardHeight, focusInputAtEnd } from '../utils/keyboard.js'
+import { focusInputAtEnd } from '../utils/keyboard.js'
 
 const emit = defineEmits(['saved', 'open-settings'])
 const videoEl = ref(null)
@@ -238,8 +237,10 @@ const zoom = ref(1)
 const zoomCaps = ref(null)
 // 曝光补偿能力（exposureCompensation 的 min/max/step），不支持的设备是 null
 const expCaps = ref(null)
-// 取景舞台：v3.0.1 固定 3:4；stageBox 供裁剪框和原生预览定位用
+// 取景舞台：v3.0.3 所见即所得，cam-wrap 跟随所选比例（拍照模式）/ 3:4（录像模式），
+// 在舞台里按最大内接矩形居中；stageBox 供 cam-wrap 尺寸和原生预览定位用
 const stageEl = ref(null)
+const camWrapEl = ref(null)
 const stageBox = ref({ w: 0, h: 0 })
 const showRatioPanel = ref(false)
 const showLensPanel = ref(false)
@@ -247,10 +248,14 @@ const showLensPanel = ref(false)
 const showMoreMenu = ref(false)
 // 信息条收起状态（v3.0.0）：点一下收起只留一行项目名，再点展开
 const infoCollapsed = ref(false)
-// 改项目名称弹层：常驻 DOM，靠透明度隐藏，点水印信息条时在点击手势内同步聚焦，直接弹输入法
-const editSheet = ref(false)
-const editProject = ref('')
-const editInput = ref(null)
+// 项目名称：v3.0.3 直接在顶栏输入框里改，不再弹确认框；
+// 输入实时显示，字太多时前面藏进去、只看正在输入的尾部（focusInputAtEnd 管光标和滚动）。
+// 历史快速选择：history 是现成的 localStorage 记录（最多 10 条），点小箭头/聚焦输入框时弹出。
+const projectInput = ref(null)
+const historyOpen = ref(false)
+let historyBlurTimer = null
+// 快门白闪（v3.0.3 提速）：点快门立刻闪一下，不等任何步骤
+const shutterFlash = ref(false)
 const camOk = ref(false)
 const camError = ref('')
 const camStarting = ref(false)
@@ -288,8 +293,7 @@ const isNative = Capacitor.isNativePlatform()
 const nativeActive = ref(false) // 原生预览正在跑（拍照模式 + 原生端）
 const nativeFlashModes = ref([]) // 插件报的支持的闪光灯模式
 let nativeStarting = false
-// 输入法键盘高度（v3.0.0）：visualViewport 方案，供改名弹层上移避让
-const kbHeight = useKeyboardHeight()
+let nativeStopRequested = false // 停用时启动还在进行：启动完成时看到这个标记就自己停掉，不激活
 
 let toastTimer = null
 let recTimer = null
@@ -321,32 +325,20 @@ function trackOverlay(id, flagRef, close) {
 trackOverlay('cam-ratio', showRatioPanel, () => { showRatioPanel.value = false })
 trackOverlay('cam-lens', showLensPanel, () => { showLensPanel.value = false })
 trackOverlay('cam-more', showMoreMenu, () => { showMoreMenu.value = false })
-trackOverlay('cam-edit', editSheet, () => { editSheet.value = false })
+trackOverlay('cam-history', historyOpen, () => { historyOpen.value = false })
 trackOverlay('cam-preview', preview, () => { preview.value = null })
-// 3:4 取景：cam-wrap 铺满舞台（CSS 定）；比例只影响裁剪框提示和拍照裁剪，不再缩小取景框
+// 3:4 取景：v3.0.3 所见即所得——cam-wrap 按目标比例（拍照模式用所选比例，录像模式用 3:4）
+// 在舞台里取最大内接矩形居中；取景框就是成片框，不再画裁剪框提示。
 const camWrapStyle = computed(() => {
-  void stageBox.value // 依赖舞台尺寸：尺寸变了才重算（ResizeObserver 更新 stageBox）
-  return { width: '100%', height: '100%' }
-})
-// 裁剪框提示：拍照模式且所选比例与 3:4 取景框不一致时，在取景里画出该比例的最大内接矩形（虚线框）；
-// 取景框固定 3:4，选 3:4 时就是整框，不画；选 9:16 / 1:1 时画出保留区域。
-const cropGuide = computed(() => {
-  if (mode.value !== 'photo' || stageBox.value.w <= 0 || stageBox.value.h <= 0) return false
-  const r = (RATIO_OPTIONS.find((x) => x.label === ratio.value) || RATIO_OPTIONS[0]).value
-  return Math.abs(r - stageBox.value.w / stageBox.value.h) > 0.01
-})
-const cropGuideStyle = computed(() => {
   const { w, h } = stageBox.value
-  const r = (RATIO_OPTIONS.find((x) => x.label === ratio.value) || RATIO_OPTIONS[0]).value
+  if (w <= 0 || h <= 0) return { width: '100%', height: '100%' }
+  const targetR = mode.value === 'photo'
+    ? (RATIO_OPTIONS.find((x) => x.label === ratio.value) || RATIO_OPTIONS[0]).value
+    : 3 / 4
   let fw, fh
-  if (w / h > r) { fh = h; fw = Math.round(h * r) }
-  else { fw = w; fh = Math.round(w / r) }
-  return {
-    width: fw + 'px',
-    height: fh + 'px',
-    left: Math.round((w - fw) / 2) + 'px',
-    top: Math.round((h - fh) / 2) + 'px'
-  }
+  if (w / h > targetR) { fh = h; fw = Math.round(h * targetR) }
+  else { fw = w; fh = Math.round(w / targetR) }
+  return { width: fw + 'px', height: fh + 'px' }
 })
 const zoomLabel = computed(() => formatZoom(zoom.value))
 const zoomOptions = computed(() => {
@@ -371,10 +363,6 @@ function showToast(msg, ms = 3500) {
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => (toast.value = ''), ms)
 }
-function onProjectInput() {
-  setLastProject(project.value.trim())
-  history.value = getProjectHistory()
-}
 function toggleInfoBar() {
   infoCollapsed.value = !infoCollapsed.value
 }
@@ -382,7 +370,7 @@ function toggleInfoBar() {
 function moreToggleFacing() { showMoreMenu.value = false; toggleFacing() }
 function moreSystemAlbum() { showMoreMenu.value = false; systemCamera('album') }
 function moreRelocate() { showMoreMenu.value = false; refreshLocation() }
-function moreEditProject() { showMoreMenu.value = false; openProjectEdit() }
+function moreEditProject() { showMoreMenu.value = false; focusProjectInput() }
 // 顶栏菜单按钮：打开设置页（App.vue 切到相册 tab 并滚到设置卡片）
 function openSettings() { emit('open-settings') }
 
@@ -390,10 +378,14 @@ function openSettings() { emit('open-settings') }
 async function startNativePreview() {
   if (nativeActive.value || nativeStarting) return false
   nativeStarting = true
+  nativeStopRequested = false
   camError.value = ''
   camStarting.value = true
   try {
-    const rect = stageEl.value ? stageEl.value.getBoundingClientRect() : null
+    // 原生预览定位到 cam-wrap（取景框本身），不是整个 stage——v3.0.3 所见即所得，
+    // cam-wrap 跟随所选比例，预览框和成片框是同一个矩形
+    const wrapEl = camWrapEl.value || stageEl.value
+    const rect = wrapEl ? wrapEl.getBoundingClientRect() : null
     const w = Math.round(rect && rect.width ? rect.width : window.innerWidth)
     const h = Math.round(rect && rect.height ? rect.height : window.innerHeight)
     const x = Math.round(rect ? rect.left : 0)
@@ -405,8 +397,19 @@ async function startNativePreview() {
       enableZoom: true, // 双指捏合变焦（插件把 WebView 触摸转发给原生预览，toBack 下也可用）
       disableAudio: true,
       disableExifHeaderStripping: false, // 插件自己按 EXIF 转正像素，省得各端解码表现不一
-      lockAndroidOrientation: true
+      lockAndroidOrientation: true,
+      storeToFile: true // v3.0.3 提速：capture() 直接写缓存文件、返回路径，不再走 base64 过桥
     })
+    // 启动期间有人要求停（比如切到相册）：刚起就停掉，不激活、不把 body 变透明
+    if (nativeStopRequested) {
+      nativeStopRequested = false
+      try { await CameraPreview.stop() } catch { /* 停不掉也认了，启动方已放弃 */ }
+      nativeActive.value = false
+      camStarting.value = false
+      nativeStarting = false
+      try { document.body.classList.remove('native-preview') } catch { /* ignore */ }
+      return false
+    }
     nativeActive.value = true
     camOk.value = true
     camStarting.value = false
@@ -421,11 +424,15 @@ async function startNativePreview() {
     nativeActive.value = false
     camStarting.value = false
     nativeStarting = false
+    nativeStopRequested = false
     return false
   }
 }
 async function stopNativePreview() {
-  if (!nativeActive.value && !nativeStarting) return
+  // 标记“有人要停”：如果启动还在进行，startNativePreview 完成时会看到这个标记、
+  // 自己把刚起的相机停掉，不激活；这里先把 nativeActive 置 false、去掉透明背景。
+  nativeStopRequested = true
+  if (!nativeActive.value && !nativeStarting) { nativeStopRequested = false; return }
   nativeActive.value = false
   try { await CameraPreview.stop() } catch { /* 已经停了 */ }
   try { document.body.classList.remove('native-preview') } catch { /* ignore */ }
@@ -680,9 +687,16 @@ watch(showLensPanel, (open) => { if (open && !cameras.value.length) listCameras(
 watch(nativeActive, (on) => {
   try { document.body.classList.toggle('native-preview', on) } catch { /* ignore */ }
 })
-function setRatio(label) {
+async function setRatio(label) {
+  const changed = ratio.value !== label
   ratio.value = label
   try { localStorage.setItem('fw_photo_ratio', label) } catch {}
+  // 取景框跟随比例变了：原生预览要按新的 cam-wrap 位置重开，不然画面还留在旧框里
+  if (changed && nativeActive.value && mode.value === 'photo') {
+    await nextTick()
+    await stopNativePreview()
+    await startPhotoCamera()
+  }
 }
 function fitStage() {
   const el = stageEl.value
@@ -988,26 +1002,49 @@ function onStagePointerCancel(e) {
   stagePointers.delete(e.pointerId)
   if (stagePointers.size < 2) stageGesture = null
 }
-// 改项目名称：弹层常驻 DOM，靠透明度隐藏；点信息条/定位提示时在点击手势内同步聚焦，手机输入法直接弹出来。
-// v3.0.0：获得焦点时光标移到文字最后、输入框横向滚到末尾（长项目名只看尾部和光标，
-// 完整项目名靠弹层顶部的实时同步行看）；弹层按键盘高度上移，不被输入法盖住。
-function openProjectEdit() {
-  editProject.value = project.value
-  editSheet.value = true
-  const input = editInput.value
-  if (input) {
-    try { input.value = project.value } catch { /* ignore */ } // 先把 DOM 值同步了，focus 处理里按这个长度移光标
-    focusInputAtEnd(input)
-  }
+// 项目名称：v3.0.3 直接在顶栏输入框里改，不再弹确认框。
+// 输入时只更新本地值（不写历史，避免打字过程中半截词污染最近项目）；
+// 失焦/回车/拍照时 commitProject 再写进 localStorage + 历史。
+function focusProjectInput() {
+  const input = projectInput.value
+  if (input) focusInputAtEnd(input)
 }
-function onEditInputFocus(e) {
+function onProjectInputFocus(e) {
   focusInputAtEnd(e.target)
+  if (history.value.length) historyOpen.value = true
 }
-function saveProjectEdit() {
-  project.value = editProject.value.trim()
-  onProjectInput()
-  editSheet.value = false
-  showToast('项目名称已更新')
+function onProjectTyping() {
+  // 打字时不保存，只保证正在输入的尾部可见（输入框原生会跟随光标滚动）
+}
+function onProjectInputBlur() {
+  // 失焦后稍等一下再关下拉，让点历史条目的 click 先触发
+  clearTimeout(historyBlurTimer)
+  historyBlurTimer = setTimeout(() => { historyOpen.value = false }, 150)
+  commitProject()
+}
+function commitProject() {
+  const name = (project.value || '').trim()
+  project.value = name
+  setLastProject(name)
+  history.value = getProjectHistory()
+}
+function commitProjectAndBlur() {
+  commitProject()
+  historyOpen.value = false
+  if (projectInput.value) projectInput.value.blur()
+}
+function toggleHistoryDropdown() {
+  if (historyOpen.value) { historyOpen.value = false; return }
+  if (!history.value.length) { showToast('还没有最近项目，先输一个吧'); return }
+  historyOpen.value = true
+  focusProjectInput()
+}
+function pickHistory(name) {
+  clearTimeout(historyBlurTimer)
+  project.value = name
+  commitProject()
+  historyOpen.value = false
+  if (projectInput.value) projectInput.value.blur()
 }
 
 // ---- 闪光灯：自动模式下预览时补光灯保持关闭，只在按快门拍照那一刻才按亮度决定开不开灯 ----
@@ -1151,7 +1188,7 @@ async function switchMode(m) {
     stopStream()
     await startPhotoCamera()
   }
-  // 网页端切回拍照不用重开流（stageRatio/cropGuide 自己变）
+  // 网页端切回拍照不用重开流（cam-wrap 跟随比例自己变）
 }
 async function toggleFacing() {
   if (nativeActive.value) {
@@ -1196,7 +1233,7 @@ function suspendCameraView() {
   showRatioPanel.value = false
   showLensPanel.value = false
   showMoreMenu.value = false
-  editSheet.value = false
+  historyOpen.value = false
   preview.value = null
   if (flashOn.value) setTorch(false).catch(() => {})
   stopNativePreview()
@@ -1446,34 +1483,26 @@ function refreshWmText() {
   wmOpacity.value = getWatermarkOpacity()
 }
 
-function makeThumb(dataUrl, mime = 'image/jpeg') {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const k = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight))
-      const c = document.createElement('canvas')
-      c.width = Math.round(img.naturalWidth * k)
-      c.height = Math.round(img.naturalHeight * k)
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-      resolve(c.toDataURL(mime, 0.8))
-    }
-    img.onerror = () => resolve('')
-    img.src = dataUrl
-  })
-}
-
 async function persistRecord({ type, blob, fileName, meta, thumb, mime, origBlob, origFileName }) {
   const saved = await saveToAppStorage(blob, fileName)
   // 无水印原图（仅照片）：另存一份 _orig.jpg 在 App 内，不进相册；
   // 详情页连点 7 次编辑文字时，用它重新烧水印替换（老照片没存原图的无法编辑）。
+  // v3.0.3 提速：原图保存和系统相册保存并行做，不再串行等（原图只服务于 7 击编辑，但别丢）。
   let origPath = ''
+  let gal = { where: 'app-only', reason: '' }
+  const jobs = []
   if (origBlob && origFileName) {
-    try {
-      const origSaved = await saveToAppStorage(origBlob, origFileName)
-      origPath = origSaved.path
-    } catch { /* 原图存失败不阻塞主照片 */ }
+    jobs.push((async () => {
+      try {
+        const origSaved = await saveToAppStorage(origBlob, origFileName)
+        origPath = origSaved.path
+      } catch { /* 原图存失败不阻塞主照片 */ }
+    })())
   }
-  const gal = await saveToGallery({ fileUri: saved.uri, isVideo: type === 'video' })
+  jobs.push((async () => {
+    gal = await saveToGallery({ fileUri: saved.uri, isVideo: type === 'video' })
+  })())
+  await Promise.all(jobs)
   const rec = {
     id: uid(), type, project: meta.project, time: meta.time,
     // 注意：meta.lon/meta.lat 在拍摄时已是 GCJ-02（currentMeta 用 gcjLon/gcjLat），记录直接存 GCJ-02；
@@ -1492,32 +1521,70 @@ async function persistRecord({ type, blob, fileName, meta, thumb, mime, origBlob
 
 // 拍照入口：原生预览在跑就用插件 capture() 取图，否则用网页取景抓帧（takePhotoWeb）
 async function takePhoto() {
+  // 即时快门反馈（v3.0.3 提速）：不等任何 await，点下去立刻震动 + 白闪，体感上一点就有反应
+  triggerShutterFeedback()
+  // 拍照时把当前项目名落到历史里（顶栏是直接输入，打字时不写历史，拍照是提交点）
+  commitProject()
   if (nativeActive.value) return takeNativePhoto()
   return takePhotoWeb()
 }
+// 点快门立刻震动 + 白闪动画，不等任何 await；保存完成后的那一下震动仍在 afterPhotoSaved 里
+function triggerShutterFeedback() {
+  vibrateOnCapture() // 不 await，失败静默（函数内部已兜底）
+  shutterFlash.value = true
+  setTimeout(() => { shutterFlash.value = false }, 180)
+}
+// capture() 的目标宽高（v3.0.3 提速）：按当前比例算到长边 2400（和 MAX_EDGE 一致，
+// 烧水印时不再二次缩放）；3:4 就是 1800×2400，比插件默认的 2MP 上限更清晰。
+function captureSizeForRatio(targetRatio) {
+  const LONG = 2400
+  if (targetRatio >= 1) return { width: LONG, height: Math.round(LONG / targetRatio) }
+  return { width: Math.round(LONG * targetRatio), height: LONG }
+}
+// capture() 的返回值：storeToFile 开着时是缓存文件路径，否则是 base64。
+// 文件路径转成 WebView 能加载的地址给烧水印用；base64 拼成 dataURL。
+function captureValueToSrc(value) {
+  if (!value) return ''
+  if (value.startsWith('/') || value.startsWith('file://') || value.startsWith('content://')) {
+    try { return Capacitor.convertFileSrc(value) } catch { return value }
+  }
+  return `data:image/jpeg;base64,${value}`
+}
+// storeToFile 的临时文件用完就删（缓存目录，删失败也不影响，系统会清）
+async function deleteCaptureTempFile(value) {
+  if (!value || !(value.startsWith('/') || value.startsWith('file://'))) return
+  const name = value.split('/').pop()
+  if (!name) return
+  try { await Filesystem.deleteFile({ path: name, directory: Directory.Cache }) } catch { /* 删不掉就留给系统清 */ }
+}
 // 原生预览拍照：capture() 取图 → 同一套 canvas 烧水印流程保存（和系统相机路径一致）
+// v3.0.3 提速：拍照不等定位（用当前 currentMeta() 快照直接拍，地址后台补）；
+// capture() 走 storeToFile（文件路径，不走 base64）+ 传目标宽高；
+// 烧水印只做 2 次整图编码，原图直接拿 Blob，缩略图复用同一块 canvas。
 async function takeNativePhoto() {
-  await waitForLocation()
   const meta = currentMeta()
+  const targetRatio = (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
+  const { width: capW, height: capH } = captureSizeForRatio(targetRatio)
+  let captureValue = ''
   try {
-    const res = await CameraPreview.capture({ quality: 90 })
+    const res = await CameraPreview.capture({ quality: 90, width: capW, height: capH })
     if (!res || !res.value) { showToast('拍照失败：没拿到照片'); return }
-    const dataUrl = `data:image/jpeg;base64,${res.value}`
-    const targetRatio = (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
-    const { blob, dataUrl: outUrl, rawDataUrl } = await burnPhotoWatermark(dataUrl, meta, targetRatio)
+    captureValue = res.value
+    const src = captureValueToSrc(captureValue)
+    const { blob, rawBlob, thumb } = await burnPhotoWatermark(src, meta, targetRatio)
+    // 烧完水印临时文件就没用了，删掉（失败也不影响）
+    deleteCaptureTempFile(captureValue)
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
-    const thumb = await makeThumb(outUrl)
-    const origBlob = rawDataUrl ? await (await fetch(rawDataUrl)).blob() : null
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg` })
+    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob: rawBlob, origFileName: `GSZD_${ts}_orig.jpg` })
     await afterPhotoSaved({ rec })
   } catch (e) {
+    deleteCaptureTempFile(captureValue)
     showToast('拍照失败：' + (e && e.message ? e.message : e))
   }
 }
 async function takePhotoWeb() {
   if (!videoEl.value || !videoEl.value.videoWidth) { showToast('相机画面还没准备好'); return }
-  await waitForLocation()
   const meta = currentMeta()
   let flashLit = false
   try {
@@ -1538,10 +1605,10 @@ async function takePhotoWeb() {
     const wmCtx = rawCanvas.getContext('2d')
     drawWatermark(wmCtx, w, h, meta)
     const blob = await new Promise((r) => rawCanvas.toBlob(r, 'image/jpeg', JPEG_QUALITY))
-    const dataUrl = rawCanvas.toDataURL('image/jpeg', JPEG_QUALITY)
+    // 缩略图复用同一块 canvas，不重新解码整图
+    const thumb = canvasToThumbDataUrl(rawCanvas)
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
-    const thumb = await makeThumb(dataUrl)
     const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg` })
     // 拍照后不弹分享、不跳预览页，留在拍摄界面直接继续拍
     await afterPhotoSaved({ rec })
@@ -1586,17 +1653,14 @@ async function systemCamera(source) {
       saveToGallery: false
     })
     if (!photo || !photo.dataUrl) return
-    await waitForLocation()
     const meta = currentMeta()
     // 系统相机/相册的图也在烧水印前按所选竖版比例中心裁剪
     const targetRatio = (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
-    const { blob, dataUrl, rawDataUrl } = await burnPhotoWatermark(photo.dataUrl, meta, targetRatio)
+    const { blob, rawBlob, thumb } = await burnPhotoWatermark(photo.dataUrl, meta, targetRatio)
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
-    const thumb = await makeThumb(dataUrl)
-    // 无水印原图：burnPhotoWatermark 烧水印前留的 rawDataUrl（已按比例裁剪、已缩放）
-    const origBlob = rawDataUrl ? await (await fetch(rawDataUrl)).blob() : null
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg` })
+    // 无水印原图：burnPhotoWatermark 直接给的 rawBlob（已按比例裁剪、已缩放）
+    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob: rawBlob, origFileName: `GSZD_${ts}_orig.jpg` })
     // 系统相机拍照同样不跳预览页，留在拍摄界面；照片同时进相册
     await afterPhotoSaved({ rec })
   } catch (e) {

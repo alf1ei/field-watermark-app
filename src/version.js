@@ -4,7 +4,7 @@
  * 显示的“更新时间”以这里的 releaseDate 为准，不写死在模板里、不每次启动联网取。
  */
 export const APP_VERSION = {
-  version: '3.0.2',
-  versionCode: 30002,
+  version: '3.0.3',
+  versionCode: 30003,
   releaseDate: '2026-11-20'
 }

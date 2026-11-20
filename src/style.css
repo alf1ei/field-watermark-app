@@ -75,15 +75,42 @@ nav.tabs button.active {
 }
 .project-row { display: flex; align-items: center; gap: 12px; height: 40px; }
 .project-label { font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap; }
+/* 项目名输入框容器（v3.0.3：顶栏直接输入，不再弹确认框；里面是 input + 小箭头） */
+.project-field { flex: 1; min-width: 0; position: relative; }
 .project-box {
-  flex: 1; min-width: 0; height: 40px; padding: 0 12px;
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  height: 40px; padding: 0 6px 0 12px;
+  display: flex; align-items: center; gap: 4px;
   border-radius: 14px; border: 1px solid rgba(255,255,255,.16);
   background: rgba(255,255,255,.07); color: #fff; font-size: 15px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
 }
-.project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.project-box input {
+  flex: 1; min-width: 0; padding: 0; border: none; outline: none;
+  background: transparent; color: #fff; font-size: 15px; text-align: left;
+}
+.project-box input::placeholder { color: #7e90a5; }
+.project-chev {
+  flex: none; width: 28px; height: 28px; border: none; background: none;
+  display: flex; align-items: center; justify-content: center; padding: 0; color: #fff;
+}
 .project-box .chev { flex: none; opacity: .85; }
+/* 最近项目下拉（v3.0.3）：黑色实底磨砂，盖在控制按钮上方，点一条就填进去 */
+.project-history {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 20;
+  border-radius: 16px; border: 1px solid rgba(255,255,255,.16);
+  background: #0d121a;
+  box-shadow: 0 12px 32px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10);
+  padding: 6px; overflow: hidden;
+}
+.project-history-title { font-size: 12px; font-weight: 700; color: #9fb0c3; padding: 6px 10px 4px; }
+.project-history-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 10px; border: none; border-radius: 12px; background: none;
+  color: #fff; font-size: 15px; text-align: left;
+}
+.project-history-item:active { background: rgba(255,255,255,.08); }
+.project-history-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-clock { flex: none; color: #9fb0c3; }
 .ctrl-row { display: flex; align-items: center; justify-content: space-around; height: 40px; }
 .ctrl-btn {
   position: relative; width: 64px; height: 40px; border-radius: 20px; flex: none;
@@ -118,8 +145,9 @@ nav.tabs button.active {
 }
 .hint.err { color: #ffb4b4; }
 
-/* ---- 取景舞台（v3.0.1）：固定 3:4，不再铺满全屏；上下是实底黑区（顶栏/底部控制） ---- */
-.stage { position: relative; flex: none; width: 100%; aspect-ratio: 3 / 4; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; touch-action: none; /* 双指捏合变焦自己接管手势，不让浏览器滚动/缩放页面 */ }
+/* ---- 取景舞台（v3.0.3 所见即所得）：舞台是 flex 区域，cam-wrap 按所选比例取最大内接矩形居中；
+   取景框就是成片框，不裁切、不折叠；上下是实底黑区（顶栏/底部控制） ---- */
+.stage { position: relative; flex: 1; min-height: 0; width: 100%; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; touch-action: none; /* 双指捏合变焦自己接管手势，不让浏览器滚动/缩放页面 */ }
 .cam-wrap { position: relative; flex: none; background: #000; overflow: hidden; }
 .cam-wrap video { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* 实时水印预览层：与烧录函数同一版式（斜水印 -30° 居中 + 底部黑条），所见即所得；点信息条改项目名称 */
@@ -136,12 +164,12 @@ nav.tabs button.active {
 /* 信息条收起态（v3.0.0）：只留一行项目名，点一下展开 */
 .wm-overlay .bar.collapsed { padding: 6px 56px 6px 12px; }
 .wm-overlay .bar-mini { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 裁剪框提示（v3.0.1）：所选比例与 3:4 取景框不一致时画出对应比例的保留区域（虚线框，仅提示用） */
-.crop-guide { position: absolute; z-index: 4; border: 2px dashed rgba(255,255,255,.85); border-radius: 4px; pointer-events: none; }
-.crop-label {
-  position: absolute; top: 6px; left: 6px; padding: 2px 8px; border-radius: 999px;
-  background: rgba(0,0,0,.55); color: #fff; font-size: 11px; font-weight: 700; white-space: nowrap;
+/* 快门白闪（v3.0.3 提速）：点快门立刻闪一下，0.18 秒淡出，不等任何步骤 */
+.shutter-flash {
+  position: absolute; inset: 0; z-index: 7; background: #fff; pointer-events: none;
+  animation: flashFade .18s ease-out forwards;
 }
+@keyframes flashFade { from { opacity: .85; } to { opacity: 0; } }
 /* 重新定位准星（v3.0.1）：取景右下角，信息条右侧留空给它，不压文字 */
 .relocate-btn {
   position: absolute; right: 10px; bottom: 10px; z-index: 6;
@@ -235,9 +263,9 @@ nav.tabs button.active {
   box-shadow: 0 6px 20px rgba(0,0,0,.45);
   pointer-events: none; white-space: nowrap;
 }
-/* 快门：红色横向椭圆钮（96×56，白边红底，无文字）；录像/停止也保持红色系 */
+/* 快门：红色圆角矩形钮（v3.0.3：96×56，圆角 16px，白边红底，无文字，不再是椭圆）；录像/停止也保持红色系 */
 .shutter {
-  width: 96px; height: 56px; border-radius: 50%;
+  width: 96px; height: 56px; border-radius: 16px;
   border: 5px solid rgba(255,255,255,.92);
   background: #ff3b30; color: #fff; font-size: 15px; font-weight: 700;
   box-shadow: 0 0 0 4px rgba(255,59,48,.3), 0 10px 26px rgba(255,59,48,.45), inset 0 2px 6px rgba(255,255,255,.25);
@@ -264,16 +292,7 @@ nav.tabs button.active {
 }
 .pick-col button.active { background: rgba(47,140,255,.35); border-color: rgba(47,140,255,.7); color: #fff; }
 .panel-sheet { margin-top: auto; }
-/* 改项目名称弹层：常驻 DOM，靠位移 + 透明度隐藏，点水印信息条时在点击手势内同步聚焦，直接弹输入法；
-   v3.0.0 键盘避让：输入法弹起时整张弹层按键盘高度上移（--kb 来自 visualViewport），输入框不被键盘盖住 */
-.edit-sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
-  transform: translateY(105%); opacity: 0; visibility: hidden;
-  transition: transform .25s cubic-bezier(.32,.72,.35,1), opacity .25s, visibility .25s;
-  pointer-events: none;
-}
-.edit-sheet.open { transform: translateY(calc(var(--kb, 0px) * -1)); opacity: 1; visibility: visible; pointer-events: auto; }
-/* 实时同步行：弹层顶部的完整项目名/时间/地址（输入框只负责显示尾部和光标） */
+/* 实时同步行：详情页编辑弹层顶部的完整项目名（输入框只负责显示尾部和光标） */
 .live-preview {
   font-size: 14px; line-height: 1.6; color: #dbe5ef; word-break: break-all;
   background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
@@ -281,8 +300,11 @@ nav.tabs button.active {
 }
 .live-preview b { color: #fff; }
 
-/* ---- 相册列表 ---- */
-.works { flex: 1; overflow-y: auto; padding: 12px 14px calc(16px + env(safe-area-inset-bottom)); }
+/* ---- 相册列表（v3.0.3）：实底不透明 #0b1220 —— body 带 native-preview 类时
+   （原生预览会把 body/#app/.app/main 背景置透明）相册页本身也不被透明掉，
+   相机预览透不出来；只保证相册列表页不透明，不动拍摄页的透明逻辑 ---- */
+.works { flex: 1; overflow-y: auto; padding: 12px 14px calc(16px + env(safe-area-inset-bottom)); background: #0b1220; }
+body.native-preview .works { background: #0b1220; }
 .works h2 { font-size: 14px; font-weight: 700; margin: 16px 2px 10px; color: #c8d4e2; letter-spacing: .02em; }
 .works h2:first-child { margin-top: 2px; }
 /* ---- 相册搜索（v3.0.0）：顶部搜索框，进相册一眼能看到；吸顶，滚动时一直能搜 ---- */
@@ -415,34 +437,45 @@ nav.tabs button.active {
 .version-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; color: #c8d4e2; }
 .version-row span { color: #8fa1b5; flex: none; }
 .version-row b { font-weight: 700; color: #fff; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* ---- 详情页（v3.0.2）：点进图片只显示图片，信息板上滑才出来；换页靠左右滑动，不再放 ‹ › 按钮和计数 ---- */
+/* ---- 详情页（v3.0.3 苹果相册逻辑）：点进图片只显示图片，点一下照片弹出/收起信息板；
+   左右滑动换页，上下滑动退出回相册；删除在右上角；换页靠左右滑动，不再放 ‹ › 按钮和计数 ---- */
 /* 详情页遮罩：纯黑底（不透出后面相册、不模糊），3:4 照片上下留黑边，像看图软件 */
 .modal-mask.detail-mask { background: #000; -webkit-backdrop-filter: none; backdrop-filter: none; }
-/* 底部上滑提示：细横线手柄 + 小灰字，点一下也能打开信息板 */
-.detail-hint {
-  position: absolute; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 5;
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  background: none; border: none; padding: 8px 16px; cursor: pointer;
+/* 详情手势容器：touch-action: none 让横/竖滑不被浏览器当滚动/拖图抢掉（真机横滑换页滑不动的修法） */
+.detail-mask .view { touch-action: none; }
+/* 详情大图：禁原生拖图/选字/长按菜单，滑动只走 pointer 手势 */
+.detail-mask .view img {
+  touch-action: none;
+  -webkit-user-drag: none; user-drag: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
 }
-.detail-hint .detail-handle {
-  width: 40px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.75);
-  box-shadow: 0 1px 6px rgba(0,0,0,.5);
+/* 信息板打开时照片区顶部留出删除按钮的位置（状态栏 + 按钮高），照片不顶到删除钮下面 */
+.detail-mask.sheet-open .view { padding-top: calc(max(env(safe-area-inset-top, 0px), 32px) + 54px); }
+/* 右上角删除：红色圆形垃圾桶（白字 SVG 图标），点它就是 deleteDetail */
+.detail-delete {
+  position: absolute; top: calc(max(env(safe-area-inset-top, 0px), 32px) + 10px); right: 14px; z-index: 9;
+  width: 44px; height: 44px; border-radius: 50%; border: none; padding: 0;
+  background: #ff3b30; color: #fff; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.25);
 }
-.detail-hint-text { font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px rgba(0,0,0,.6); white-space: nowrap; }
-/* 信息板：平时滑到屏幕下方藏起来，上滑/点手柄后滑上来；圆角顶边 + 顶部手柄；内容可滚 */
+.detail-delete svg { display: block; }
+/* 信息板：在文档流里（不是 absolute 盖在照片上）——打开时它占位把照片区往上顶，
+   照片底边始终在信息板顶边之上，不盖住照片和水印信息条；
+   平时 max-height: 0 藏起来，打开时 max-height 放到 62%，高度按内容来，超了里面可滚 */
 .detail-sheet {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 8;
-  transform: translateY(105%);
-  transition: transform .25s cubic-bezier(.32,.72,.35,1);
+  position: relative; flex: none; z-index: 8;
+  max-height: 0; overflow: hidden;
+  transition: max-height .25s cubic-bezier(.32,.72,.35,1);
   background: rgba(20,26,36,.92);
   -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
-  border-top: 1px solid rgba(255,255,255,.14);
+  border-top: 1px solid transparent;
   border-radius: 24px 24px 0 0;
-  box-shadow: 0 -12px 44px rgba(0,0,0,.55);
-  max-height: 62%;
+  box-shadow: none;
   display: flex; flex-direction: column;
 }
-.detail-sheet.open { transform: translateY(0); }
+.detail-sheet.open { max-height: 62%; border-top-color: rgba(255,255,255,.14); box-shadow: 0 -12px 44px rgba(0,0,0,.55); }
 .detail-sheet-handle {
   flex: none; width: 40px; height: 4px; border-radius: 999px;
   background: rgba(255,255,255,.35); margin: 10px auto 2px; cursor: pointer;

@@ -133,17 +133,17 @@
 
   <UpdatePrompt v-if="updateRemote" :remote="updateRemote" @close="updateRemote = null" />
 
-  <!-- 详情页（v3.0.2）：点进图片只显示图片本身；底部手柄提示上滑查看详情；
-       上滑后信息板从底部滑上来（5 行信息 + 文件夹 + 操作按钮）；下滑/点手柄/点图片收起；
-       换页靠左右滑动（‹ › 按钮和计数已取消）。7 次点按编辑保留（见 onDetailImageTap）。 -->
-  <div v-if="detail" class="modal-mask detail-mask">
-    <div class="view" @pointerdown="onDetailPointerDown" @pointerup="onDetailPointerUp" @pointercancel="onDetailPointerCancel">
-      <img v-if="detail.type === 'photo'" :src="detailUrl" @click="onDetailImageTap" />
+  <!-- 详情页（v3.0.3 苹果相册逻辑）：点进图片只显示图片本身；
+       点一下照片弹出/收起底部信息板（7 次点按编辑保留，见 onDetailImageTap）；
+       左右滑动换页，上下滑动退出回相册；删除在右上角；
+       信息板在文档流里（打开时把照片往上顶，不盖住照片和水印信息条）。 -->
+  <div v-if="detail" class="modal-mask detail-mask" :class="{ 'sheet-open': infoSheetOpen }">
+    <button class="detail-delete" @click="deleteDetail" title="删除" aria-label="删除这张照片">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+    </button>
+    <div class="view detail-view" @pointerdown="onDetailPointerDown" @pointerup="onDetailPointerUp" @pointercancel="onDetailPointerCancel">
+      <img v-if="detail.type === 'photo'" :src="detailUrl" draggable="false" @click="onDetailImageTap" />
       <video v-else :src="detailUrl" controls autoplay></video>
-      <button v-if="!infoSheetOpen" class="detail-hint" @click="infoSheetOpen = true" title="上滑查看详情">
-        <span class="detail-handle"></span>
-        <span class="detail-hint-text">上滑查看详情</span>
-      </button>
     </div>
     <div class="detail-sheet" :class="{ open: infoSheetOpen }">
       <div class="detail-sheet-handle" @click="infoSheetOpen = false"></div>
@@ -163,8 +163,7 @@
       </div>
       <div class="modal-actions">
         <button @click="shareDetail">分享 / 导出</button>
-        <button class="danger" @click="deleteDetail">删除</button>
-        <button @click="detail = null">关闭</button>
+        <button @click="closeDetail">关闭</button>
       </div>
     </div>
   </div>
@@ -297,11 +296,13 @@ const editLatText = ref('')
 const editSaving = ref(false)
 let detailTapCount = 0
 let detailTapLast = 0
-let lastSwipeAt = 0 // 刚滑过一张照片：300ms 内那次 click 不算连点
+let lastSwipeAt = 0 // 刚滑过一张照片：500ms 内那次 click 不算点按（不开关信息板、不计 7 击）
 function onDetailImageTap() {
-  if (infoSheetOpen.value) { infoSheetOpen.value = false; return } // 信息板开着时点图片先收起，不计 7 击
-  if (!detail.value || detail.value.type !== 'photo') return
-  if (Date.now() - lastSwipeAt < 500) return // 滑动结束后的 click 不累计 7 击
+  if (!detail.value || detail.value.type !== 'photo') return // 只对照片做点按逻辑，视频走自带 controls
+  if (Date.now() - lastSwipeAt < 500) return // 滑动结束后的 click 不累计 7 击、不开关信息板
+  // 点按和 7 击是同一套 tap：每次点都先切换信息板开/关，再计一次 7 击，
+  // 信息板开关不吞计数（板开着时点图片也会计数）。
+  infoSheetOpen.value = !infoSheetOpen.value
   const now = Date.now()
   if (now - detailTapLast > 3000) detailTapCount = 0 // 超过 3 秒没点：清零重数
   detailTapLast = now
@@ -312,8 +313,18 @@ function onDetailImageTap() {
   }
   if (detailTapCount >= 7) {
     detailTapCount = 0
+    infoSheetOpen.value = false // 第 7 次：收起信息板再开编辑
     openDetailEdit()
   }
+}
+// 退出详情回相册：竖滑退出和信息板“关闭”共用。先把详情相关的 overlay
+// 从返回栈里清掉（works-detail-sheet 后注册、先清；再清 works-detail），
+// 再关详情；watch(detail) 里也会清一次，removeBackOverlay 是幂等的，不冲突。
+function closeDetail() {
+  removeBackOverlay('works-detail-sheet')
+  removeBackOverlay('works-detail')
+  infoSheetOpen.value = false
+  detail.value = null
 }
 function openDetailEdit() {
   const rec = detail.value
@@ -329,21 +340,6 @@ function openDetailEdit() {
   editLonText.value = rec.lon != null ? toDMS(rec.lon, false) : '未定位'
   editLatText.value = rec.lat != null ? toDMS(rec.lat, true) : '未定位'
   editSheet.value = rec
-}
-function thumbFromDataUrl(dataUrl) {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      const k = Math.min(1, 320 / Math.max(img.naturalWidth, img.naturalHeight))
-      const c = document.createElement('canvas')
-      c.width = Math.round(img.naturalWidth * k)
-      c.height = Math.round(img.naturalHeight * k)
-      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-      resolve(c.toDataURL('image/jpeg', 0.8))
-    }
-    img.onerror = () => resolve('')
-    img.src = dataUrl
-  })
 }
 async function saveDetailEdit() {
   const rec = editSheet.value
@@ -370,11 +366,12 @@ async function saveDetailEdit() {
       opacity: getWatermarkOpacity()
     }
     // 原图已是裁剪好的画面，不再按比例裁剪，直接重烧
-    const { blob, dataUrl } = await burnPhotoWatermark(origDataUrl, meta)
+    // v3.0.3：burnPhotoWatermark 返回 { blob, rawBlob, thumb }，不再有 dataUrl；
+    // 缩略图直接用返回的 thumb，详情显示用 blob 的 objectURL。
+    const { blob, thumb } = await burnPhotoWatermark(origDataUrl, meta)
     // 覆盖 App 内原文件（同名同路径），再存一份到相册
     const saved = await saveToAppStorage(blob, rec.path.split('/').pop())
     const gal = await saveToGallery({ fileUri: saved.uri, isVideo: false })
-    const thumb = await thumbFromDataUrl(dataUrl)
     const list = loadRecords()
     const hit = list.find((x) => x.id === rec.id)
     if (hit) {
@@ -387,7 +384,8 @@ async function saveDetailEdit() {
       saveRecords(list)
     }
     detail.value = hit || { ...rec, project: meta.project, time: meta.time, address: meta.address, thumb }
-    detailUrl.value = dataUrl
+    if (detailUrl.value && detailUrl.value.startsWith('blob:')) URL.revokeObjectURL(detailUrl.value)
+    detailUrl.value = URL.createObjectURL(blob)
     editSheet.value = null
     refresh()
     showToast('已更新，照片已重新烧水印')
@@ -745,10 +743,12 @@ async function onCheckUpdate() {
   }
 }
 
-// ---- 详情页滑动（v3.0.0 横滑换页 + v3.0.2 竖滑开关信息板）----
+// ---- 详情页滑动（v3.0.3 苹果相册逻辑）----
 // 在详情大图上左/右滑切换上一张/下一张（按列表顺序：左滑看更早的，右滑看更新的），
-// 到头给提示；上滑打开信息板，下滑收起信息板；‹ › 按钮和计数已取消（v3.0.2）。
-// 滑动结束后的 click 不计入 7 次点按（lastSwipeAt 守卫在 onDetailImageTap 里）。
+// 到头给提示；上滑或下滑都直接退出详情回相册（不再开关信息板）；
+// 信息板改由点一下照片开关（见 onDetailImageTap）。‹ › 按钮和计数已取消（v3.0.2）。
+// 滑动结束后的 click 不计入 7 次点按、不开关信息板（lastSwipeAt 守卫在 onDetailImageTap 里）。
+// 方向一次判清：pointerup 时按 dx/dy 阈值只走一条分支，点按和竖滑不会抢掉横滑。
 const swipeList = computed(() => filteredRecords.value)
 const detailIndex = computed(() => (detail.value ? swipeList.value.findIndex((r) => r.id === detail.value.id) : -1))
 let detailSwipeStart = null // { x, y }：本次滑动的起点
@@ -767,11 +767,11 @@ function onDetailPointerUp(e) {
     else goDetailPrev()
     return
   }
-  // 竖滑：上滑打开信息板，下滑收起信息板（横向分量小才算）
+  // 竖滑：上滑或下滑都直接退出详情回相册（横向分量小才算）；
+  // closeDetail 里先清返回栈里的 works-detail-sheet / works-detail，再关详情。
   if (Math.abs(dy) >= 60 && Math.abs(dx) <= 50) {
     lastSwipeAt = Date.now()
-    if (dy < 0) infoSheetOpen.value = true
-    else infoSheetOpen.value = false
+    closeDetail()
   }
 }
 function onDetailPointerCancel() {
