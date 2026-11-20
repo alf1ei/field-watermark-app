@@ -122,18 +122,13 @@ export function canvasToThumbDataUrl(canvas) {
  * @param {string} src 图片 dataURL / blobURL / http(s) 地址
  * @param {object} meta 同 drawWatermark
  * @param {number} [ratio] 目标宽高比，不传则保持原图比例
- * @param {{origFileDims?:{width:number,height:number}}} [opts]
- *   origFileDims：拍摄文件的尺寸（Camera2 插件 capture 返回的 width/height）。
- *   和成品尺寸一致时，拍摄文件本身就是无水印原图，不再重新编码一份原图
- *   （rawBlob 返回 null，origReused 为 true，调用方直接拿拍摄文件当原图）。
- * @returns {Promise<{blob:Blob, rawBlob:Blob|null, thumb:string, width:number, height:number, origReused:boolean}>}
+ * @returns {Promise<{blob:Blob, rawBlob:Blob|null, thumb:string, width:number, height:number}>}
  *   blob 是烧好水印的成品；rawBlob 是烧水印之前的无水印原图（已按 ratio 裁剪、已缩放，
  *   直接是 Blob，供详情页编辑文字时重烧用）；thumb 是同一块 canvas 顺手出的 320px 缩略图。
  *   v3.0.3：整图 JPEG 编码从 3 次减到 2 次（rawDataUrl / dataUrl 两次 toDataURL 已砍掉，
  *   不再返回它们；调用方用 rawBlob 存原图、用 thumb 做缩略图、用 URL.createObjectURL(blob) 展示）。
- *   v3.1.0：拍摄文件和成品同尺寸时原图不再编码（只剩成品 1 次编码），rawBlob 为 null。
  */
-export async function burnPhotoWatermark(src, meta, ratio, opts = {}) {
+export async function burnPhotoWatermark(src, meta, ratio) {
   const img = await loadImage(src)
   let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight
   if (ratio && ratio > 0) {
@@ -150,15 +145,12 @@ export async function burnPhotoWatermark(src, meta, ratio, opts = {}) {
   canvas.width = w; canvas.height = h
   const ctx = canvas.getContext('2d')
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, w, h)
-  // v3.1.0：拍摄文件本身就是无水印原图——调用方传了 origFileDims 且和成品尺寸一致时
-  // （常见情况：3:4 → 1800×2400，烧水印不裁剪不缩放），不再重新编码一份原图，
-  // rawBlob 返回 null，调用方直接拿拍摄文件当原图；尺寸对不上时退回老路。
-  const reuseOrig = !!(opts.origFileDims && opts.origFileDims.width === w && opts.origFileDims.height === h)
-  const rawBlob = reuseOrig ? null : await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
+  // 烧水印之前的画面就是无水印原图：先留一份 Blob，供详情页 7 次点击编辑文字时重烧
+  const rawBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
   drawWatermark(ctx, w, h, meta)
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY))
   if (!blob) throw new Error('水印导出失败')
   // 缩略图复用同一块 canvas，不重新解码整图
   const thumb = canvasToThumbDataUrl(canvas)
-  return { blob, rawBlob, thumb, width: w, height: h, origReused: reuseOrig }
+  return { blob, rawBlob, thumb, width: w, height: h }
 }

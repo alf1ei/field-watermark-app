@@ -191,27 +191,6 @@ export async function deleteAppFile(path) {
 }
 
 /**
- * 把缓存目录里的文件拷到 App 内 Data 目录（v3.1.0 提速：拍摄文件本身就是无水印原图，
- * 直接拷过去当 _orig，不用重新编码一份；原生文件拷贝，不经过 base64，比读+写快得多）。
- * @param {string} cachePath 缓存文件路径（绝对路径，如 /data/.../cache/GSZD_....jpg，或 file://）
- * @param {string} fileName 目标文件名（如 GSZD_...._orig.jpg，存在 works/ 下）
- * @returns {Promise<string>} App 内路径（works/<fileName>）
- */
-export async function copyCacheFileToData(cachePath, fileName) {
-  const name = String(cachePath || '').split('/').pop()
-  if (!name) throw new Error('缓存文件路径不对')
-  try {
-    await Filesystem.copy({ from: name, to: `works/${fileName}`, directory: Directory.Cache, toDirectory: Directory.Data })
-    return `works/${fileName}`
-  } catch {
-    // copy 不可用时退回读+写（base64 往返，慢一点但能用）
-    const src = await Filesystem.readFile({ path: name, directory: Directory.Cache })
-    await Filesystem.writeFile({ path: `works/${fileName}`, data: src.data, directory: Directory.Data, recursive: true })
-    return `works/${fileName}`
-  }
-}
-
-/**
  * 保存到系统相册。返回 {ok, where}，where: 'gallery' | 'app-only'
  * 照片用 Media.savePhoto，视频用 Media.saveVideo（需要文件路径时用 App 内文件的 uri）。
  */

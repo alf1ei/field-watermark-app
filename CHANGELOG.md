@@ -2,6 +2,13 @@
 
 每次发版的改动都记在这里，最新版本在最上面。
 
+## v3.1.2（2026-11-20）
+
+- v3.1.1 装上还是闪退：两个权限都允许完就闪退，Camera2 插件的根因没找到（无真机日志、无法复现），先换回 camera-preview 拍照预览保证能用
+- 拍照预览换回 `@capacitor-community/camera-preview` 7.0.5（v3.0.3 那条路）：`CameraPreview.start` + `capture({width,height})` + `storeToFile`，点按 1× 切换前后镜头（`flip()`），长按 1× 滑动变焦；Camera2 插件代码留在仓库里不动它，以后再单独排障
+- 保留 v3.1.0 里不依赖 Camera2 的改进：相册详情左右滑过渡动画（照片跟手、松手滑到下一张、没滑够弹回）；拍照提速里的快门立刻震动+白闪、拍照不等定位、烧水印 2 次编码、原图与系统相册并行保存（v3.0.3 的做法）
+- 暂缓：Camera2 多镜头切换（超广角/长焦）、滑动变焦条
+
 ## v3.1.1（2026-11-20）
 
 - 修 v3.1.0 闪退：App 弹权限后闪退，之后每次启动都闪退。根因是 Camera2 插件的 `engine` 用 `lateinit var`，权限弹窗（独立 Activity）触发 `onPause`/`onResume` 时插件还没被用过，`handleOnPause` 直接访问未初始化的 engine 抛 `UninitializedPropertyAccessException`；Capacitor 对插件方法异常是重抛 `RuntimeException`、生命周期回调又没有任何 try/catch，一次就杀进程
