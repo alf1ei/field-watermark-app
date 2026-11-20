@@ -133,32 +133,39 @@
 
   <UpdatePrompt v-if="updateRemote" :remote="updateRemote" @close="updateRemote = null" />
 
-  <div v-if="detail" class="modal-mask">
+  <!-- 详情页（v3.0.2）：点进图片只显示图片本身；底部手柄提示上滑查看详情；
+       上滑后信息板从底部滑上来（5 行信息 + 文件夹 + 操作按钮）；下滑/点手柄/点图片收起；
+       换页靠左右滑动（‹ › 按钮和计数已取消）。7 次点按编辑保留（见 onDetailImageTap）。 -->
+  <div v-if="detail" class="modal-mask detail-mask">
     <div class="view" @pointerdown="onDetailPointerDown" @pointerup="onDetailPointerUp" @pointercancel="onDetailPointerCancel">
-      <button v-if="swipeList.length > 1" class="detail-nav prev" @click.stop="goDetailPrev" title="上一张">‹</button>
       <img v-if="detail.type === 'photo'" :src="detailUrl" @click="onDetailImageTap" />
       <video v-else :src="detailUrl" controls autoplay></video>
-      <button v-if="swipeList.length > 1" class="detail-nav next" @click.stop="goDetailNext" title="下一张">›</button>
-      <span v-if="swipeList.length > 1" class="detail-counter">{{ detailIndex + 1 }} / {{ swipeList.length }}</span>
+      <button v-if="!infoSheetOpen" class="detail-hint" @click="infoSheetOpen = true" title="上滑查看详情">
+        <span class="detail-handle"></span>
+        <span class="detail-hint-text">上滑查看详情</span>
+      </button>
     </div>
-    <div class="modal-meta">
-      <div>项目：{{ detail.project || '（未填）' }}</div>
-      <div>时间：{{ detail.time }}</div>
-      <div>经纬度：{{ detail.lon != null ? `${toDMS(detail.lon, false)} ${toDMS(detail.lat, true)}` : '未定位' }}</div>
-      <div>地址：<span v-if="detail.address">{{ detail.address }}</span><span v-else class="miss">（未获取到）</span></div>
-      <div>保存：App 内 ✓　{{ detail.gallery === 'gallery' ? '手机相册 ✓' : '手机相册 ✗（' + (detail.galleryNote || '仅存 App 内') + '）' }}</div>
-      <div>文件：{{ detail.path }}</div>
-      <div class="folder-move">文件夹：
-        <select v-model="detailFolder" @change="moveDetailFolder">
-          <option value="">不归档（按日期显示）</option>
-          <option v-for="f in folders" :key="f.id" :value="f.id">{{ f.name }}</option>
-        </select>
+    <div class="detail-sheet" :class="{ open: infoSheetOpen }">
+      <div class="detail-sheet-handle" @click="infoSheetOpen = false"></div>
+      <div class="modal-meta">
+        <div>项目：{{ detail.project || '（未填）' }}</div>
+        <div>时间：{{ detail.time }}</div>
+        <div>经纬度：{{ detail.lon != null ? `${toDMS(detail.lon, false)} ${toDMS(detail.lat, true)}` : '未定位' }}</div>
+        <div>地址：<span v-if="detail.address">{{ detail.address }}</span><span v-else class="miss">（未获取到）</span></div>
+        <div>保存：App 内 ✓　{{ detail.gallery === 'gallery' ? '手机相册 ✓' : '手机相册 ✗（' + (detail.galleryNote || '仅存 App 内') + '）' }}</div>
+        <div>文件：{{ detail.path }}</div>
+        <div class="folder-move">文件夹：
+          <select v-model="detailFolder" @change="moveDetailFolder">
+            <option value="">不归档（按日期显示）</option>
+            <option v-for="f in folders" :key="f.id" :value="f.id">{{ f.name }}</option>
+          </select>
+        </div>
       </div>
-    </div>
-    <div class="modal-actions">
-      <button @click="shareDetail">分享 / 导出</button>
-      <button class="danger" @click="deleteDetail">删除</button>
-      <button @click="detail = null">关闭</button>
+      <div class="modal-actions">
+        <button @click="shareDetail">分享 / 导出</button>
+        <button class="danger" @click="deleteDetail">删除</button>
+        <button @click="detail = null">关闭</button>
+      </div>
     </div>
   </div>
 
@@ -229,6 +236,8 @@ const records = ref([])
 const detail = ref(null)
 const detailUrl = ref('')
 const detailFolder = ref('')
+// 详情信息板（v3.0.2）：默认收起（只显示图片），上滑/点手柄打开，下滑/点手柄/点图片收起
+const infoSheetOpen = ref(false)
 const toast = ref('')
 const folders = ref([])
 const photoFolder = ref({})
@@ -290,6 +299,7 @@ let detailTapCount = 0
 let detailTapLast = 0
 let lastSwipeAt = 0 // 刚滑过一张照片：300ms 内那次 click 不算连点
 function onDetailImageTap() {
+  if (infoSheetOpen.value) { infoSheetOpen.value = false; return } // 信息板开着时点图片先收起，不计 7 击
   if (!detail.value || detail.value.type !== 'photo') return
   if (Date.now() - lastSwipeAt < 500) return // 滑动结束后的 click 不累计 7 击
   const now = Date.now()
@@ -559,9 +569,14 @@ function onCellClick(it) {
 }
 
 // 返回键弹层栈：详情弹层和新建文件夹输入区开/关时注册/注销，App.vue 的 backButton 按打开顺序倒着关。
+// 信息板开着时返回键先收信息板（后注册，先弹出），再关详情。
 watch(detail, (open) => {
   if (open) pushBackOverlay('works-detail', () => { detail.value = null })
-  else removeBackOverlay('works-detail')
+  else { removeBackOverlay('works-detail'); infoSheetOpen.value = false }
+})
+watch(infoSheetOpen, (open) => {
+  if (open) pushBackOverlay('works-detail-sheet', () => { infoSheetOpen.value = false })
+  else removeBackOverlay('works-detail-sheet')
 })
 watch(showNewFolder, (open) => {
   if (open) pushBackOverlay('works-newfolder', () => { showNewFolder.value = false })
@@ -632,6 +647,7 @@ async function fileSrc(it) {
 
 async function openDetail(it) {
   detailTapCount = 0 // 换一张照片重数，避免上一张的点击数带过来
+  infoSheetOpen.value = false // 换一张照片先收起信息板，只显示图片
   detail.value = it
   detailFolder.value = getPhotoFolder(it.id)
   detailUrl.value = await fileSrc(it)
@@ -729,9 +745,10 @@ async function onCheckUpdate() {
   }
 }
 
-// ---- 详情页左右滑动（v3.0.0）----
+// ---- 详情页滑动（v3.0.0 横滑换页 + v3.0.2 竖滑开关信息板）----
 // 在详情大图上左/右滑切换上一张/下一张（按列表顺序：左滑看更早的，右滑看更新的），
-// 到头给提示；也可以点图片两侧的 ‹ › 按钮切换。
+// 到头给提示；上滑打开信息板，下滑收起信息板；‹ › 按钮和计数已取消（v3.0.2）。
+// 滑动结束后的 click 不计入 7 次点按（lastSwipeAt 守卫在 onDetailImageTap 里）。
 const swipeList = computed(() => filteredRecords.value)
 const detailIndex = computed(() => (detail.value ? swipeList.value.findIndex((r) => r.id === detail.value.id) : -1))
 let detailSwipeStart = null // { x, y }：本次滑动的起点
@@ -743,10 +760,19 @@ function onDetailPointerUp(e) {
   const dx = e.clientX - detailSwipeStart.x
   const dy = e.clientY - detailSwipeStart.y
   detailSwipeStart = null
-  if (Math.abs(dx) < 60 || Math.abs(dy) > 50) return // 横滑不够、或竖滑为主：不算切换
-  lastSwipeAt = Date.now()
-  if (dx < 0) goDetailNext()
-  else goDetailPrev()
+  // 横滑：切换上一张/下一张（竖向分量小才算）
+  if (Math.abs(dx) >= 60 && Math.abs(dy) <= 50) {
+    lastSwipeAt = Date.now()
+    if (dx < 0) goDetailNext()
+    else goDetailPrev()
+    return
+  }
+  // 竖滑：上滑打开信息板，下滑收起信息板（横向分量小才算）
+  if (Math.abs(dy) >= 60 && Math.abs(dx) <= 50) {
+    lastSwipeAt = Date.now()
+    if (dy < 0) infoSheetOpen.value = true
+    else infoSheetOpen.value = false
+  }
 }
 function onDetailPointerCancel() {
   detailSwipeStart = null

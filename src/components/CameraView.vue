@@ -1,8 +1,12 @@
 <template>
-  <!-- v3.0.1 拍摄页（第五版效果图）：顶部项目名 + 四个控制按钮在黑区里，
+  <!-- v3.0.2 拍摄页（第七版效果图）：顶部项目名 + 四个椭圆控制按钮在黑区里，
        中间 3:4 取景，下方模式药丸 + 快门行；底部导航是 App.vue 的拍摄/相册。 -->
   <div class="shoot" :class="{ 'native-on': nativeActive }">
-  <!-- 顶部：项目名称（老版样式，点一下改名）+ 四个控制按钮（黑色毛玻璃圆钮，不悬浮在取景上） -->
+  <!-- 顶区实底（v3.0.2）：.app 顶部的安全区留白在原生预览下是透明的，相机画面会从项目名称上方透出来；
+       这条固定色带从屏幕最顶端（y=0）盖住安全区，和顶栏同色 #0b1220；
+       切到相册时 .cam-page display:none，连它一起藏起来；不挡点击。 -->
+  <div class="top-fill" aria-hidden="true"></div>
+  <!-- 顶部：项目名称（老版样式，点一下改名）+ 四个控制按钮（黑色毛玻璃椭圆钮，不悬浮在取景上） -->
   <div class="topbar">
     <div class="project-row">
       <span class="project-label">项目名称</span>
@@ -90,7 +94,7 @@
       </button>
       <button class="circle-btn zoom-btn" @click="onZoomBtnClick"
         @pointerdown="onZoomPressStart" @pointermove="onZoomPressMove" @pointerup="onZoomPressEnd" @pointercancel="onZoomPressEnd"
-        :title="nativeActive ? '原生预览：双指捏合变焦' : '镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）'">{{ zoomLabel }}</button>
+        :title="nativeActive ? '点一下切换前后镜头（双指捏合变焦）' : '镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）'">{{ zoomLabel }}</button>
     </div>
     <div v-if="zoomDragging" class="zoom-bubble">{{ zoomLabel }}</div>
   </div>
@@ -187,6 +191,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
 import { CameraPreview } from '@capacitor-community/camera-preview'
+import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
 import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters, loadLastFix } from '../utils/geo.js'
 import { drawWatermark, drawVideoFrame, burnPhotoWatermark, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
@@ -813,8 +818,10 @@ function onZoomPressEnd() {
 function onZoomBtnClick() {
   if (zoomSuppressClick) { zoomSuppressClick = false; return }
   if (nativeActive.value) {
-    // 原生预览没有程序化变焦接口：倍数只能双指捏合调，按钮只提示
-    showToast('原生预览：双指捏合可变焦；换镜头用“更多”里的前后切换')
+    // v3.0.2：原生预览点按变焦按钮 = 切换前后镜头（CameraPreview.flip()）。
+    // 插件没有多镜头选择接口（只有 position front/rear + flip），超广角/长焦选不了；
+    // 要选具体镜头走网页取景的镜头面板（点一下在网页取景下打开）或系统相机。
+    toggleFacing()
     return
   }
   showLensPanel.value = true
@@ -1545,9 +1552,23 @@ async function takePhotoWeb() {
   }
 }
 
+// 拍照后震动一下（v3.0.2，用户要求）：原生端用 Capacitor Haptics 轻触感，
+// 网页版用 navigator.vibrate(50) 兜底；不支持震动的设备静默跳过。
+// 只在拍照成功后震（afterPhotoSaved 里调），录像不震。
+async function vibrateOnCapture() {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await Haptics.impact({ style: ImpactStyle.Light })
+      return
+    }
+  } catch { /* 原生震动失败就退到网页 vibrate */ }
+  try { if (navigator.vibrate) navigator.vibrate(50) } catch { /* 不支持震动静默跳过 */ }
+}
+
 // 拍照后存相册：原生直接写相册；网页版浏览器没有直接写相册的权限，
 // 照片先存在 App 的相册里，需要进相册时去相册点分享、选“存储到照片”。
 async function afterPhotoSaved({ rec }) {
+  vibrateOnCapture() // 拍完轻震一下（只在拍照成功后；录像不走这里）
   if (Capacitor.isNativePlatform()) {
     if (rec.gallery === 'gallery') showToast('已保存到相册 ✓，继续拍吧')
     else showToast('已存 App 内，相册保存失败（可在相册里分享导出）')

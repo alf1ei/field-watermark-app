@@ -8,6 +8,7 @@
     "@capacitor/camera": "^7.0.2",
     "@capacitor/core": "^7.4.0",
     "@capacitor/filesystem": "^7.0.2",
+    "@capacitor/haptics": "^7.0.5",
     "@capacitor/ios": "^7.6.10",
     "@capacitor/share": "^7.0.2",
     "@jwot/capacitor-apkupdater": "^0.0.2",
@@ -35,5 +36,5 @@
     "verify:pwa": "node scripts/verify-pwa.mjs"
   },
   "type": "module",
-  "version": "3.0.1"
+  "version": "3.0.2"
 }

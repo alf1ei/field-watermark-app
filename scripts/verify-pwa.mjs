@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v15 + skipWaiting', sw.includes('fw-pwa-v15') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v16 + skipWaiting', sw.includes('fw-pwa-v16') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,7 +67,7 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 3.0.1', pkg && pkg.version === '3.0.1')
+check('package.json 版本是 3.0.2', pkg && pkg.version === '3.0.2')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
@@ -75,7 +75,7 @@ check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId ==
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
 // 与工作流文件保持同步：工作流升到 v3.0.1 后此处也要是 3.0.1，
 // 否则 verify:pwa 会失败（工作流仍是 v3.0.0 时这两项检查先失败，等父级改完工作流再过）。
-check('工作流已同步到 v3.0.1（tag/Release/artifact/改名）', workflow.includes('tag_name: v3.0.1') && workflow.includes('长江现场水印相机 v3.0.1') && workflow.includes('长江现场水印相机-3.0.1-release-apk') && workflow.includes('长江现场水印相机v3.0.1.apk'))
+check('工作流已同步到 v3.0.2（tag/Release/artifact/改名）', workflow.includes('tag_name: v3.0.2') && workflow.includes('长江现场水印相机 v3.0.2') && workflow.includes('长江现场水印相机-3.0.2-release-apk') && workflow.includes('长江现场水印相机v3.0.2.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -276,7 +276,7 @@ check('相册页设置卡有隐私政策/用户协议入口（PolicyViewer）', 
 check('SW 缓存包含隐私政策/用户协议页（PWA 离线可看）', sw.includes('privacy.html') && sw.includes('terms.html'))
 check('工作流能打 release 包（assembleRelease + apksigner 签名 + 校验）', workflow.includes('assembleRelease') && workflow.includes('apksigner') && workflow.includes('sign') && workflow.includes('verify'))
 check('签名信息从 Secrets 读（四个名都在），缺失明确报错不回落 debug', workflow.includes('ANDROID_KEYSTORE_BASE64') && workflow.includes('KEYSTORE_PASSWORD') && workflow.includes('KEY_ALIAS') && workflow.includes('KEY_PASSWORD') && workflow.includes('缺少 release 签名 Secrets') && workflow.includes('exit 1'))
-check('Release 只放签名后的 release 包（不是 debug 包）', workflow.includes('files: android/app/build/outputs/apk/release/长江现场水印相机v3.0.1.apk'))
+check('Release 只放签名后的 release 包（不是 debug 包）', workflow.includes('files: android/app/build/outputs/apk/release/长江现场水印相机v3.0.2.apk'))
 check('debug 构建保留（assembleDebug + debug artifact，供平时测试）', workflow.includes('assembleDebug') && workflow.includes('debug-apk'))
 check('versionCode 按 package.json 自动算（cap add 会重置成 1，不算会被商店拒收更新）', workflow.includes('versionCode') && workflow.includes('major * 10000') && workflow.includes('set-version'))
 const listing = existsSync(join(root, 'docs/STORE-LISTING.md')) ? readFileSync(join(root, 'docs/STORE-LISTING.md'), 'utf8') : ''
@@ -288,10 +288,10 @@ check('dist 里有隐私政策/用户协议页（构建产物）', existsSync(jo
 // 8. v3.0.0：原生相机预览 + 全屏 UI + 水印透明度 + 相册滑动 + 内置 Key + OTA（Gitee）
 // + 版本显示 + 键盘避让 + 联系邮箱展示 + 去谷歌框架 + 相册搜索 + 安装权限引导
 const versionJs = readFileSync(join(root, 'src/version.js'), 'utf8')
-check('版本信息模块 version.js（3.0.1/30001/2026-11-20，App 内显示 + OTA 共用）', versionJs.includes("'3.0.1'") && versionJs.includes('30001') && versionJs.includes('2026-11-20') && versionJs.includes('APP_VERSION'))
+check('版本信息模块 version.js（3.0.2/30002/2026-11-20，App 内显示 + OTA 共用）', versionJs.includes("'3.0.2'") && versionJs.includes('30002') && versionJs.includes('2026-11-20') && versionJs.includes('APP_VERSION'))
 let versionJson = null
 try { versionJson = JSON.parse(readFileSync(join(root, 'version.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('根目录 version.json（3.0.1/30001 + Gitee apkUrl）', versionJson && versionJson.version === '3.0.1' && versionJson.versionCode === 30001 && versionJson.apkUrl.includes('gitee.com/alf1e/field-watermark-app') && versionJson.apkUrl.includes('v3.0.1'))
+check('根目录 version.json（3.0.2/30002 + Gitee apkUrl）', versionJson && versionJson.version === '3.0.2' && versionJson.versionCode === 30002 && versionJson.apkUrl.includes('gitee.com/alf1e/field-watermark-app') && versionJson.apkUrl.includes('v3.0.2'))
 const otaJs = readFileSync(join(root, 'src/utils/ota.js'), 'utf8')
 check('OTA 模块（Gitee 真实地址 alf1e、versionCode 比较、downloadFile 下载、安装器安装）', otaJs.includes('gitee.com/alf1e/field-watermark-app') && otaJs.includes('OTA_VERSION_URL') && otaJs.includes('versionCode') && otaJs.includes('downloadFile') && otaJs.includes('FileOpener'))
 check('OTA 安装前查“安装未知应用”权限（canRequestPackageInstalls + NO_INSTALL_PERMISSION）', otaJs.includes('canInstallUnknownApps') && otaJs.includes('canRequestPackageInstalls') && otaJs.includes('NO_INSTALL_PERMISSION') && otaJs.includes('requestInstallPermission'))
@@ -300,14 +300,14 @@ check('OTA 更新提示框有权限引导（去设置开启 + 只需开一次 + 
 check('App.vue 启动时查一次更新（有新版才弹 UpdatePrompt）', appVue.includes('checkForUpdate') && appVue.includes('UpdatePrompt') && appVue.includes('launchUpdate'))
 check('原生相机预览（CameraPreview、toBack、enableZoom、capture、flip、setFlashMode）', cam.includes('CameraPreview') && cam.includes('toBack') && cam.includes('enableZoom') && cam.includes('capture') && cam.includes('flip') && cam.includes('setFlashMode'))
 check('串行权限（requestPermissionsSerially：先定位探针、再相机，各 30 秒超时不阻塞）', cam.includes('requestPermissionsSerially') && cam.includes('await withTimeout(getPosition(), 30000') && cam.includes("Camera.requestPermissions({ permissions: ['camera'] })"))
-check('相册详情左右滑动（onDetailPointerDown/Up、到头提示、两侧按钮、计数）', works.includes('onDetailPointerDown') && works.includes('onDetailPointerUp') && works.includes('已经是第一张') && works.includes('已经是最后一张') && works.includes('detail-nav') && works.includes('detail-counter'))
+check('相册详情左右滑动（onDetailPointerDown/Up、到头提示；‹ › 按钮和计数已取消，v3.0.2）', works.includes('onDetailPointerDown') && works.includes('onDetailPointerUp') && works.includes('已经是第一张') && works.includes('已经是最后一张') && !works.includes('detail-nav') && !works.includes('detail-counter'))
 const keyboardJs = readFileSync(join(root, 'src/utils/keyboard.js'), 'utf8')
 check('键盘避让（visualViewport 算键盘高度、光标移到末尾、横向滚到末尾）', keyboardJs.includes('visualViewport') && keyboardJs.includes('setSelectionRange') && keyboardJs.includes('scrollLeft') && cam.includes('kbHeight') && cam.includes('focusInputAtEnd') && cam.includes('live-preview') && works.includes('kbHeight') && works.includes('live-preview'))
 check('版本显示（WorksList 含 APP_VERSION、releaseDate、检查更新、联系邮箱仅展示、无 mailto）', works.includes('APP_VERSION') && works.includes('releaseDate') && works.includes('检查更新') && works.includes('w4yne@foxmail.com') && !works.includes('mailto'))
 check('定位不再用 @capacitor/geolocation（依赖已删、geo.js 无原生导入、只走 navigator.geolocation）', !pkg.dependencies['@capacitor/geolocation'] && !geoJs.includes("import('@capacitor/geolocation')") && geoJs.includes('navigator.geolocation') && !(cap.plugins && cap.plugins.Geolocation))
 check('相册搜索（顶部搜索框、项目/地址/日期过滤、项目优先、不区分大小写、无结果提示）', works.includes('search-bar') && works.includes('searchText') && works.includes('matchScore') && works.includes('filteredRecords') && works.includes('toLowerCase') && works.includes('没有找到相关照片') && css.includes('.search-bar'))
 check('原生预览下视频仍走网页路线（录像水印保得住：切录像停原生预览开网页流）', cam.includes("await stopNativePreview()") && cam.includes("mode.value = 'video'") && cam.includes('getRecAudioTrack'))
-check('README 已更新到 3.0.1（版本号/OTA Gitee/去谷歌框架/搜索，无 7 次编辑口径）', readme.includes('3.0.1') && readme.includes('gitee.com/alf1e/field-watermark-app') && !readme.includes('7 次') && !readme.includes('重烧'))
+check('README 已更新到 3.0.2（版本号/OTA Gitee/去谷歌框架/搜索，无 7 次编辑口径）', readme.includes('3.0.2') && readme.includes('gitee.com/alf1e/field-watermark-app') && !readme.includes('7 次') && !readme.includes('重烧'))
 
 // 9. v3.0.1：拍摄页按第五版效果图重做（顶栏 + 3:4 取景 + 模式药丸 + 快门无文字）
 // + 网页版详情页图片裂开修复 + 菜单按钮打开设置页
@@ -317,6 +317,21 @@ check('拍照快门无「拍照」两个字（模板里 >拍照</button> 只剩�
 check('网页版详情页直接读 data URL（非原生不走 getUri + convertFileSrc，原生路径不动）', works.includes('async function fileSrc') && works.includes("if (!Capacitor.isNativePlatform())") && works.includes('return await readAppFile(it.path, mime)') && works.includes('Capacitor.convertFileSrc(uri)'))
 check('菜单按钮打开设置页（CameraView 发 open-settings → App.vue 切相册 tab → 滚到设置卡片）', cam.includes("defineEmits(['saved', 'open-settings'])") && cam.includes('function openSettings()') && appVue.includes('@open-settings="onOpenSettings"') && appVue.includes('scrollToSettings') && works.includes('function scrollToSettings') && works.includes("defineExpose({ refresh, scrollToSettings })"))
 check('取景框固定 3:4、裁剪框只在所选比例与取景不一致时显示（选 3:4 不画整框）', css.includes('aspect-ratio: 3 / 4') && cam.includes("Math.abs(r - stageBox.value.w / stageBox.value.h) > 0.01"))
+
+// 10. v3.0.2：拍摄页按第七版效果图（椭圆按钮 + 三行对齐 + 顶区实底）
+// + 点按变焦按钮切换前后镜头 + 详情只显示图片/上滑出信息板 + 拍照后轻震一下
+check('顶区实底（top-fill 固定色带从 y=0 盖住安全区，#0b1220，不挡点击）', css.includes('.top-fill') && css.includes('position: fixed') && css.includes('top: 0') && css.includes('background: #0b1220') && css.includes('pointer-events: none') && cam.includes('top-fill'))
+check('顶栏四个控制按钮是 64×40 横向椭圆（圆角 20px，图标不变）', css.includes('.ctrl-btn') && css.includes('width: 64px; height: 40px; border-radius: 20px') && css.includes('.ctrl-row') && css.includes('height: 40px'))
+check('快门是 96×56 红色横向椭圆（无文字），快门行高 72px、间距 26px', css.includes('.shutter') && css.includes('width: 96px; height: 56px') && css.includes('.shutter-row') && css.includes('gap: 26px') && css.includes('height: 72px'))
+check('比例/变焦按钮是 64×40 横向椭圆（和顶栏椭圆钮同一套）', css.includes('.circle-btn') && css.includes('width: 64px; height: 40px; border-radius: 20px'))
+check('下面三行对齐（模式药丸 276px 宽三段等分、快门行 276px、底部导航内层 276px 居中）', css.includes('.mode-row') && css.includes('width: 276px') && css.includes('.mode-row button') && css.includes('flex: 1') && css.includes('padding: 8px calc((100% - 276px) / 2)'))
+check('点按变焦按钮切换前后镜头（原生预览走 flip，不再只弹提示）', cam.includes('function onZoomBtnClick') && cam.includes('toggleFacing()') && !cam.includes('换镜头用“更多”里的前后切换'))
+check('拍照后轻震一下（Haptics impact Light + 网页 navigator.vibrate(50) 兜底，只在拍照成功后）', cam.includes("import { Haptics, ImpactStyle } from '@capacitor/haptics'") && cam.includes('vibrateOnCapture') && cam.includes('ImpactStyle.Light') && cam.includes('navigator.vibrate(50)') && cam.includes('vibrateOnCapture()') && pkg.dependencies['@capacitor/haptics'])
+check('详情只显示图片（上滑提示手柄 + 信息板，‹ › 按钮和计数已删）', works.includes('detail-hint') && works.includes('上滑查看详情') && works.includes('detail-sheet') && works.includes('infoSheetOpen') && !works.includes('detail-nav') && !works.includes('detail-counter'))
+check('详情页遮罩纯黑底（3:4 照片上下留黑边，不透出后面相册）', css.includes('.detail-mask') && css.includes('.modal-mask.detail-mask { background: #000') && works.includes('detail-mask'))
+check('详情竖滑开关信息板（上滑 ≥60px 打开，下滑 ≥60px 收起，横向分量小才算）', works.includes("Math.abs(dy) >= 60") && works.includes('infoSheetOpen.value = true') && works.includes('infoSheetOpen.value = false'))
+check('详情 7 次点按编辑保留，信息板开着时点图片先收板、不计 7 击', works.includes('onDetailImageTap') && works.includes('detailTapCount') && works.includes('3000') && works.includes('if (infoSheetOpen.value)'))
+check('信息板注册进返回栈（返回键先收板再关详情）', works.includes("pushBackOverlay('works-detail-sheet'"))
 
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))

@@ -24,7 +24,7 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
    不用直接 v-show。切到相册时这里 display:none，相机流不停。 */
 .cam-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-/* ---- 拍摄页（v3.0.1）：顶栏 + 3:4 取景 + 底部控制，控制不在取景上悬浮 ---- */
+/* ---- 拍摄页（v3.0.2）：顶栏 + 3:4 取景 + 底部控制，控制不在取景上悬浮 ---- */
 .shoot { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 /* 原生预览时 WebView 之后就是相机画面：整条 HTML 背景链都要透明，否则原生画面透不出来
    （插件自己会把 WebView 背景设透明，HTML 自己的背景也得跟着透） */
@@ -32,9 +32,19 @@ body.native-preview, body.native-preview #app, body.native-preview .app, body.na
 body.native-preview .cam-page, body.native-preview .shoot, body.native-preview .stage,
 body.native-preview .cam-wrap { background: transparent; }
 
+/* 顶区实底（v3.0.2）：.app 顶部的安全区留白在原生预览下是透明的，相机画面会从项目名称上方透出来；
+   这条固定色带从屏幕最顶端（y=0）盖住安全区，和顶栏同色 #0b1220；
+   切到相册时 .cam-page display:none，连它一起藏起来；不挡点击。 */
+.top-fill {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+  height: max(env(safe-area-inset-top, 0px), 32px);
+  background: #0b1220;
+  pointer-events: none;
+}
+
 /* ---- 底部导航：磨砂玻璃条（v3.0.1：实底深蓝黑，选中段深蓝药丸 #22375e，和模式药丸同一套） ---- */
 nav.tabs {
-  display: flex; gap: 6px; padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+  display: flex; gap: 6px; padding: 8px calc((100% - 276px) / 2) calc(10px + env(safe-area-inset-bottom));
   background: #0b1220;
   border-top: 1px solid rgba(255,255,255,.08);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
@@ -56,10 +66,11 @@ nav.tabs button.active {
   display: inline-flex; align-items: center; justify-content: center;
 }
 
-/* ---- 顶部栏（v3.0.1）：项目名称 + 四个控制按钮，实底黑区，不悬浮在取景上 ---- */
+/* ---- 顶部栏（v3.0.2）：项目名称 + 四个控制按钮，实底黑区，不悬浮在取景上；
+   四个按钮是 64×40 横向椭圆（和快门、比例、变焦同一套），顶栏总高约 96px ---- */
 .topbar {
   flex: none; background: #0b1220;
-  padding: 6px 14px 8px;
+  padding: 4px 14px 6px;
   display: flex; flex-direction: column; gap: 6px;
 }
 .project-row { display: flex; align-items: center; gap: 12px; height: 40px; }
@@ -73,9 +84,9 @@ nav.tabs button.active {
 }
 .project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .project-box .chev { flex: none; opacity: .85; }
-.ctrl-row { display: flex; align-items: center; justify-content: space-around; height: 44px; }
+.ctrl-row { display: flex; align-items: center; justify-content: space-around; height: 40px; }
 .ctrl-btn {
-  position: relative; width: 44px; height: 44px; border-radius: 50%; flex: none;
+  position: relative; width: 64px; height: 40px; border-radius: 20px; flex: none;
   border: 1px solid rgba(255,255,255,.18);
   background: rgba(255,255,255,.08); color: #fff;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
@@ -173,37 +184,40 @@ nav.tabs button.active {
 .cam-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ---- 底部控制区（v3.0.1）：模式药丸 + 快门行，在取景下方实底黑区里，不悬浮；
-   药丸与快门同一条竖直中线（两区都居中，快门行左右圆钮等宽对称） ---- */
+/* ---- 底部控制区（v3.0.2）：模式药丸 + 快门行，在取景下方实底黑区里，不悬浮；
+   三行对齐：模式药丸、快门行、底部导航内层都是 276px 宽、同一条竖直中线（x=195）；
+   快门行左右椭圆钮外缘对齐到模式药丸两端，快门 96×56 椭圆居中 ---- */
 .bottom-ctrl {
   position: relative; flex: none; background: #0b1220;
   padding: 6px 0 10px;
   display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
 .shutter-row {
-  display: flex; align-items: center; justify-content: center; gap: 50px;
-  height: 92px;
+  display: flex; align-items: center; justify-content: center; gap: 26px;
+  height: 72px;
 }
-/* 左右圆钮：黑色毛玻璃（和顶栏四个圆钮同一套） */
+/* 左右椭圆钮：黑色毛玻璃（和顶栏四个椭圆钮同一套），64×40 横向椭圆 */
 .circle-btn {
-  width: 56px; height: 56px; border-radius: 50%; flex: none;
+  width: 64px; height: 40px; border-radius: 20px; flex: none;
   border: 1px solid rgba(255,255,255,.18);
   background: rgba(255,255,255,.08); color: #fff; font-size: 15px; font-weight: 700;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 4px 14px rgba(0,0,0,.35);
   display: flex; align-items: center; justify-content: center; padding: 0;
 }
-/* 模式切换：黑色毛玻璃药丸，三段（系统相机/拍照/录像）；选中段深蓝 #22375e，和底部导航选中态同一套 */
+/* 模式切换：黑色毛玻璃药丸，三段（系统相机/拍照/录像），宽 276px 三段等分；选中段深蓝 #22375e，和底部导航选中态同一套 */
 .mode-row {
   display: flex; gap: 4px; justify-content: center;
+  width: 276px;
   background: rgba(13,18,26,.65); border: 1px solid rgba(255,255,255,.14);
   border-radius: 999px; padding: 4px;
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
 }
 .mode-row button {
-  padding: 6px 18px; border-radius: 999px; border: none;
+  flex: 1; padding: 6px 0; border-radius: 999px; border: none;
   background: transparent; color: #9fb0c3; font-size: 14px; font-weight: 600;
+  text-align: center;
 }
 .mode-row button.active {
   background: #22375e; color: #fff; font-weight: 700;
@@ -221,9 +235,9 @@ nav.tabs button.active {
   box-shadow: 0 6px 20px rgba(0,0,0,.45);
   pointer-events: none; white-space: nowrap;
 }
-/* 快门：红色大圆钮（白边红底，无文字）；录像/停止也保持红色系 */
+/* 快门：红色横向椭圆钮（96×56，白边红底，无文字）；录像/停止也保持红色系 */
 .shutter {
-  width: 84px; height: 84px; border-radius: 50%;
+  width: 96px; height: 56px; border-radius: 50%;
   border: 5px solid rgba(255,255,255,.92);
   background: #ff3b30; color: #fff; font-size: 15px; font-weight: 700;
   box-shadow: 0 0 0 4px rgba(255,59,48,.3), 0 10px 26px rgba(255,59,48,.45), inset 0 2px 6px rgba(255,255,255,.25);
@@ -401,24 +415,46 @@ nav.tabs button.active {
 .version-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; color: #c8d4e2; }
 .version-row span { color: #8fa1b5; flex: none; }
 .version-row b { font-weight: 700; color: #fff; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 详情页左右切换（v3.0.0）：两侧箭头 + 右下角计数 */
-.detail-nav {
-  position: absolute; top: 50%; transform: translateY(-50%); z-index: 5;
-  width: 44px; height: 44px; border-radius: 50%; border: 1px solid rgba(255,255,255,.25);
-  background: rgba(0,0,0,.45); color: #fff; font-size: 24px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  box-shadow: 0 4px 14px rgba(0,0,0,.4);
+/* ---- 详情页（v3.0.2）：点进图片只显示图片，信息板上滑才出来；换页靠左右滑动，不再放 ‹ › 按钮和计数 ---- */
+/* 详情页遮罩：纯黑底（不透出后面相册、不模糊），3:4 照片上下留黑边，像看图软件 */
+.modal-mask.detail-mask { background: #000; -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* 底部上滑提示：细横线手柄 + 小灰字，点一下也能打开信息板 */
+.detail-hint {
+  position: absolute; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  background: none; border: none; padding: 8px 16px; cursor: pointer;
 }
-.detail-nav.prev { left: 10px; }
-.detail-nav.next { right: 10px; }
-.detail-counter {
-  position: absolute; right: 12px; bottom: 12px; z-index: 5;
-  padding: 4px 10px; border-radius: 999px;
-  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; font-weight: 700;
-  border: 1px solid rgba(255,255,255,.12);
-  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-  pointer-events: none;
+.detail-hint .detail-handle {
+  width: 40px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.75);
+  box-shadow: 0 1px 6px rgba(0,0,0,.5);
+}
+.detail-hint-text { font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px rgba(0,0,0,.6); white-space: nowrap; }
+/* 信息板：平时滑到屏幕下方藏起来，上滑/点手柄后滑上来；圆角顶边 + 顶部手柄；内容可滚 */
+.detail-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 8;
+  transform: translateY(105%);
+  transition: transform .25s cubic-bezier(.32,.72,.35,1);
+  background: rgba(20,26,36,.92);
+  -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%);
+  border-top: 1px solid rgba(255,255,255,.14);
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -12px 44px rgba(0,0,0,.55);
+  max-height: 62%;
+  display: flex; flex-direction: column;
+}
+.detail-sheet.open { transform: translateY(0); }
+.detail-sheet-handle {
+  flex: none; width: 40px; height: 4px; border-radius: 999px;
+  background: rgba(255,255,255,.35); margin: 10px auto 2px; cursor: pointer;
+}
+.detail-sheet .modal-meta {
+  background: transparent; border: none; max-height: none;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  flex: 1; min-height: 0; overflow-y: auto;
+}
+.detail-sheet .modal-actions {
+  background: transparent;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 .folder-move select {
   padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18);
