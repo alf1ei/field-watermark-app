@@ -85,14 +85,14 @@ jobs:
           cd android
           gradle assembleDebug --no-daemon --console=plain
 
-      - name: Rename debug APK to 长江现场水印相机v3.1.0-debug
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/长江现场水印相机v3.1.0-debug.apk"
+      - name: Rename debug APK to 长江现场水印相机v3.1.1-debug
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "android/app/build/outputs/apk/debug/长江现场水印相机v3.1.1-debug.apk"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 长江现场水印相机-3.1.0-debug-apk
-          path: android/app/build/outputs/apk/debug/长江现场水印相机v3.1.0-debug.apk
+          name: 长江现场水印相机-3.1.1-debug-apk
+          path: android/app/build/outputs/apk/debug/长江现场水印相机v3.1.1-debug.apk
           retention-days: 30
           if-no-files-found: error
 
@@ -128,26 +128,26 @@ jobs:
             --ks-pass "pass:$KEYSTORE_PASSWORD" \
             --ks-key-alias "$KEY_ALIAS" \
             --key-pass "pass:$KEY_PASSWORD" \
-            --out "app/build/outputs/apk/release/长江现场水印相机v3.1.0.apk" \
+            --out "app/build/outputs/apk/release/长江现场水印相机v3.1.1.apk" \
             app/build/outputs/apk/release/app-release-unsigned.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "app/build/outputs/apk/release/长江现场水印相机v3.1.0.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "app/build/outputs/apk/release/长江现场水印相机v3.1.1.apk"
           rm -f app/release.keystore
           ls -l app/build/outputs/apk/release/
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 长江现场水印相机-3.1.0-release-apk
-          path: android/app/build/outputs/apk/release/长江现场水印相机v3.1.0.apk
+          name: 长江现场水印相机-3.1.1-release-apk
+          path: android/app/build/outputs/apk/release/长江现场水印相机v3.1.1.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Create Release v3.1.0 with signed APK
+      - name: Create Release v3.1.1 with signed APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.1.0
-          name: 长江现场水印相机 v3.1.0
-          files: android/app/build/outputs/apk/release/长江现场水印相机v3.1.0.apk
+          tag_name: v3.1.1
+          name: 长江现场水印相机 v3.1.1
+          files: android/app/build/outputs/apk/release/长江现场水印相机v3.1.1.apk
           fail_on_unmatched_files: true
 
       - name: Publish APK as base64 chunks (retrieval fallback)
@@ -171,5 +171,5 @@ jobs:
           git config user.name "github-actions"
           git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git add -A
-          git commit -qm "APK base64 chunks v3.1.0"
+          git commit -qm "APK base64 chunks v3.1.1"
           git push -qf origin releases-b64
