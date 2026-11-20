@@ -1,1 +1,1 @@
-{"apkUrl":"https://gitee.com/alf1e/field-watermark-app/releases/download/v3.1.0/长江现场水印相机v3.1.0.apk","notes":"Camera2 插件接管拍照预览：超广角/长焦/主摄/前置全列出、点镜头切换，滑动变焦；相册详情左右滑加过渡动画（照片跟手、松手滑到下一张）；拍照再提速（拍照直接写文件不走 base64、原图直接复用拍摄文件、系统相册后台同步）","releaseDate":"2026-11-20","version":"3.1.0","versionCode":30100}
+{"apkUrl":"https://gitee.com/alf1e/field-watermark-app/releases/download/v3.1.1/长江现场水印相机v3.1.1.apk","notes":"修 v3.1.0 闪退：Camera2 插件启动后弹权限就闪退、之后每次启动都闪退；插件引擎改可空、生命周期与全部调用点判空、后台线程异常不再杀进程","releaseDate":"2026-11-20","version":"3.1.1","versionCode":30101}

@@ -89,8 +89,19 @@ class Camera2Engine(private val context: Context) {
 
     // ---- camera state (guarded by the camera-open semaphore where noted) ----
     private val cameraOpenCloseLock = Semaphore(1)
-    private var cameraManager: CameraManager =
-        context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+    /**
+     * Nullable on purpose: getSystemService can return null on devices
+     * without a camera service, and the `as` cast would otherwise throw
+     * in the constructor (killing plugin load). Call sites check null
+     * and fail the start cleanly instead of crashing.
+     */
+    private var cameraManager: CameraManager? =
+        try {
+            context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+        } catch (e: Exception) {
+            Log.w(TAG, "no camera service", e)
+            null
+        }
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var previewRequestBuilder: CaptureRequest.Builder? = null
@@ -166,12 +177,27 @@ class Camera2Engine(private val context: Context) {
             return
         }
         starting = true
+        // onReady must fire exactly once: several paths below (open error,
+        // session failure, first frame, timeout) can each try to report,
+        // and a double resolve/reject is a bug. Guard it here so every
+        // caller — including the top-level catch below — is safe.
+        var reported = false
         val wrappedReady: (Boolean, String?) -> Unit = { ok, err ->
-            starting = false
-            onReady(ok, err)
+            if (!reported) {
+                reported = true
+                starting = false
+                onReady(ok, err)
+            }
         }
         backgroundHandler.post {
-            startOnBackground(cameraId, view, captureWidth, captureHeight, wrappedReady)
+            try {
+                startOnBackground(cameraId, view, captureWidth, captureHeight, wrappedReady)
+            } catch (e: Exception) {
+                // Uncaught exceptions on this thread kill the whole process
+                // (v3.1.0 crash). Turn them into a clean start failure.
+                Log.w(TAG, "start failed", e)
+                wrappedReady(false, "start failed: ${e.message}")
+            }
         }
     }
 
@@ -185,8 +211,13 @@ class Camera2Engine(private val context: Context) {
     /** Change the zoom ratio. Returns the ratio actually applied (clamped). */
     fun setZoomRatio(ratio: Float, done: (Float) -> Unit) {
         backgroundHandler.post {
-            val applied = applyZoomRatio(ratio)
-            done(applied)
+            try {
+                val applied = applyZoomRatio(ratio)
+                done(applied)
+            } catch (e: Exception) {
+                Log.w(TAG, "setZoomRatio", e)
+                done(zoomRatio)
+            }
         }
     }
 
@@ -194,9 +225,14 @@ class Camera2Engine(private val context: Context) {
 
     fun setFlashMode(mode: String, done: (Boolean) -> Unit) {
         backgroundHandler.post {
-            flashMode = mode
-            val ok = updatePreviewRequest()
-            done(ok)
+            try {
+                flashMode = mode
+                val ok = updatePreviewRequest()
+                done(ok)
+            } catch (e: Exception) {
+                Log.w(TAG, "setFlashMode", e)
+                done(false)
+            }
         }
     }
 
@@ -215,10 +251,15 @@ class Camera2Engine(private val context: Context) {
 
     fun setExposureCompensation(value: Float, done: (Float) -> Unit) {
         backgroundHandler.post {
-            val clamped = value.coerceIn(exposureRange.first.toFloat(), exposureRange.last.toFloat())
-            exposureValue = clamped
-            updatePreviewRequest()
-            done(clamped)
+            try {
+                val clamped = value.coerceIn(exposureRange.first.toFloat(), exposureRange.last.toFloat())
+                exposureValue = clamped
+                updatePreviewRequest()
+                done(clamped)
+            } catch (e: Exception) {
+                Log.w(TAG, "setExposureCompensation", e)
+                done(exposureValue)
+            }
         }
     }
 
@@ -284,12 +325,19 @@ class Camera2Engine(private val context: Context) {
         currentCameraId = cameraId
         zoomRatio = 1f
         try {
-            characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val mgr = cameraManager ?: run {
+                onReady(false, "camera service unavailable")
+                return
+            }
+            characteristics = mgr.getCameraCharacteristics(cameraId)
         } catch (e: Exception) {
             onReady(false, "cannot read camera $cameraId: ${e.message}")
             return
         }
-        val chars = characteristics!!
+        val chars = characteristics ?: run {
+            onReady(false, "cannot read camera $cameraId")
+            return
+        }
         sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
         sensorActiveArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
         maxDigitalZoom = chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
@@ -319,7 +367,8 @@ class Camera2Engine(private val context: Context) {
         val viewW = if (view.width > 0) view.width else 1080
         val viewH = if (view.height > 0) view.height else 1440
         previewSize = choosePreviewSize(chars, viewW, viewH)
-        captureSize = chooseCaptureSize(chars, captureWidth, captureHeight, previewSize!!)
+        val preview = previewSize ?: Size(viewW, viewH)
+        captureSize = chooseCaptureSize(chars, captureWidth, captureHeight, preview)
         // First-frame timeout: resolve the start call even if the preview
         // never produces a frame, so the JS side never hangs forever.
         if (!firstFrameTimeoutPosted) {
@@ -356,15 +405,28 @@ class Camera2Engine(private val context: Context) {
             onReady(false, "no camera id")
             return
         }
+        val mgr = cameraManager ?: run {
+            onReady(false, "camera service unavailable")
+            return
+        }
         // Permission is requested by the plugin (Capacitor permission flow)
         // before start() is called; openCamera throws SecurityException if
         // it was revoked meanwhile.
-        if (!cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
+        // tryAcquire throws InterruptedException — it must be caught here:
+        // an uncaught exception on this thread kills the whole process.
+        val acquired = try {
+            cameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            onReady(false, "camera open interrupted")
+            return
+        }
+        if (!acquired) {
             onReady(false, "camera busy (open lock timeout)")
             return
         }
         try {
-            cameraManager.openCamera(id, deviceStateCallback(onReady), backgroundHandler)
+            mgr.openCamera(id, deviceStateCallback(onReady), backgroundHandler)
         } catch (e: CameraAccessException) {
             cameraOpenCloseLock.release()
             onReady(false, "openCamera failed: ${e.message}")
@@ -424,7 +486,14 @@ class Camera2Engine(private val context: Context) {
             if (view.isAvailable) {
                 view.surfaceTexture?.setDefaultBufferSize(size.width, size.height)
             }
-            val previewSurface = Surface(view.surfaceTexture)
+            // surfaceTexture can be null if the view was detached between
+            // the isAvailable check and here (e.g. Activity paused). A null
+            // SurfaceTexture makes Surface() throw NPE — fail cleanly.
+            val surfaceTexture = view.surfaceTexture ?: run {
+                onReady(false, "preview surface gone")
+                return
+            }
+            val previewSurface = Surface(surfaceTexture)
             // (Re)create the ImageReader for still capture.
             try {
                 imageReader?.close()
@@ -458,6 +527,12 @@ class Camera2Engine(private val context: Context) {
                         view.post { configureTransform(view.width, view.height) }
                     } catch (e: CameraAccessException) {
                         onReady(false, "start preview failed: ${e.message}")
+                    } catch (e: IllegalStateException) {
+                        // Camera/session closed between open and configure
+                        // (e.g. Activity paused mid-start): fail cleanly.
+                        onReady(false, "start preview failed: camera closed")
+                    } catch (e: Exception) {
+                        onReady(false, "start preview failed: ${e.message}")
                     }
                 }
 
@@ -480,6 +555,11 @@ class Camera2Engine(private val context: Context) {
         } catch (e: CameraAccessException) {
             onReady(false, "createCaptureSession failed: ${e.message}")
         } catch (e: IllegalArgumentException) {
+            onReady(false, "createCaptureSession failed: ${e.message}")
+        } catch (e: IllegalStateException) {
+            // Camera closed between open and session creation.
+            onReady(false, "createCaptureSession failed: camera closed")
+        } catch (e: Exception) {
             onReady(false, "createCaptureSession failed: ${e.message}")
         }
     }
@@ -569,6 +649,13 @@ class Camera2Engine(private val context: Context) {
             session.setRepeatingRequest(previewRequest!!, previewCaptureCallback { _, _ -> }, backgroundHandler)
             true
         } catch (e: CameraAccessException) {
+            Log.w(TAG, "updatePreviewRequest", e)
+            false
+        } catch (e: IllegalStateException) {
+            // Session closed (e.g. stop() raced a zoom/flash change).
+            Log.w(TAG, "updatePreviewRequest: session closed", e)
+            false
+        } catch (e: Exception) {
             Log.w(TAG, "updatePreviewRequest", e)
             false
         }
@@ -723,6 +810,13 @@ class Camera2Engine(private val context: Context) {
         } catch (e: CameraAccessException) {
             pendingCapture = null
             onResult(Result.failure(e))
+        } catch (e: IllegalStateException) {
+            // Camera/session closed mid-capture (e.g. stop() raced it).
+            pendingCapture = null
+            onResult(Result.failure(e))
+        } catch (e: Exception) {
+            pendingCapture = null
+            onResult(Result.failure(e))
         }
     }
 
@@ -840,6 +934,10 @@ class Camera2Engine(private val context: Context) {
             }, 500L)
         } catch (e: CameraAccessException) {
             Log.w(TAG, "tapToFocus", e)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "tapToFocus: session closed", e)
+        } catch (e: Exception) {
+            Log.w(TAG, "tapToFocus", e)
         }
     }
 
@@ -882,9 +980,13 @@ class Camera2Engine(private val context: Context) {
                 kotlin.math.abs(s.width.toFloat() / s.height - wantAspect) < 0.02f
             }
             val pool = matching.ifEmpty { sizes }
-            // Closest by pixel count to the requested size.
+            // Closest by pixel count to the requested size. If the camera
+            // reports no JPEG sizes at all, fall back to the preview size
+            // instead of crashing on a null (!! was here in v3.1.0).
             val wantPx = wantW * wantH
-            return pool.minByOrNull { kotlin.math.abs(it.width * it.height - wantPx) } ?: sizes.maxByOrNull { it.width * it.height }!!
+            return pool.minByOrNull { kotlin.math.abs(it.width * it.height - wantPx) }
+                ?: sizes.maxByOrNull { it.width * it.height }
+                ?: previewSize
         }
         return sizes.maxByOrNull { it.width * it.height } ?: previewSize
     }

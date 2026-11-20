@@ -36,7 +36,11 @@ object CameraInfoUtil {
     private const val FULL_FRAME_DIAGONAL_MM = 43.27f
 
     fun listCameras(context: Context): List<CameraInfo> {
-        val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val manager = try {
+            context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
+        } catch (e: Exception) {
+            null
+        } ?: return emptyList()
         val ids = try {
             manager.cameraIdList
         } catch (e: Exception) {

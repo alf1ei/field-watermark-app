@@ -50,7 +50,7 @@ try {
   check('sw.js 语法通过', true)
 } catch { check('sw.js 语法通过', false) }
 const sw = existsSync(swPath) ? readFileSync(swPath, 'utf8') : ''
-check('SW 有版本化缓存 v18 + skipWaiting', sw.includes('fw-pwa-v18') && sw.includes('skipWaiting'))
+check('SW 有版本化缓存 v19 + skipWaiting', sw.includes('fw-pwa-v19') && sw.includes('skipWaiting'))
 check('SW 导航请求网络优先、断网回退 index', sw.includes("mode === 'navigate'") && sw.includes('index.html'))
 
 // 4. index.html / main.js / vite.config / 改名 + 版本
@@ -67,7 +67,7 @@ const vite = readFileSync(join(root, 'vite.config.js'), 'utf8')
 check("vite base 是 './'", vite.includes("base: './'"))
 let pkg = null
 try { pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('package.json 版本是 3.1.0', pkg && pkg.version === '3.1.0')
+check('package.json 版本是 3.1.1', pkg && pkg.version === '3.1.1')
 let cap = null
 try { cap = JSON.parse(readFileSync(join(root, 'capacitor.config.json'), 'utf8')) } catch (e) { /* ignore */ }
 check('capacitor appName 是 长江现场水印相机', cap && cap.appName === '长江现场水印相机')
@@ -75,7 +75,7 @@ check('capacitor appId 未变（com.gszd.fieldwatermark）', cap && cap.appId ==
 const workflow = readFileSync(join(root, '.github/workflows/build-apk.yml'), 'utf8')
 // 与工作流文件保持同步：工作流升到 v3.0.1 后此处也要是 3.0.1，
 // 否则 verify:pwa 会失败（工作流仍是 v3.0.0 时这两项检查先失败，等父级改完工作流再过）。
-check('工作流已同步到 v3.1.0（tag/Release/artifact/改名）', workflow.includes('tag_name: v3.1.0') && workflow.includes('长江现场水印相机 v3.1.0') && workflow.includes('长江现场水印相机-3.1.0-release-apk') && workflow.includes('长江现场水印相机v3.1.0.apk'))
+check('工作流已同步到 v3.1.1（tag/Release/artifact/改名）', workflow.includes('tag_name: v3.1.1') && workflow.includes('长江现场水印相机 v3.1.1') && workflow.includes('长江现场水印相机-3.1.1-release-apk') && workflow.includes('长江现场水印相机v3.1.1.apk'))
 
 // 5. 安装提示 + 兜底功能
 const appVue = readFileSync(join(root, 'src/App.vue'), 'utf8')
@@ -276,7 +276,7 @@ check('相册页设置卡有隐私政策/用户协议入口（PolicyViewer）', 
 check('SW 缓存包含隐私政策/用户协议页（PWA 离线可看）', sw.includes('privacy.html') && sw.includes('terms.html'))
 check('工作流能打 release 包（assembleRelease + apksigner 签名 + 校验）', workflow.includes('assembleRelease') && workflow.includes('apksigner') && workflow.includes('sign') && workflow.includes('verify'))
 check('签名信息从 Secrets 读（四个名都在），缺失明确报错不回落 debug', workflow.includes('ANDROID_KEYSTORE_BASE64') && workflow.includes('KEYSTORE_PASSWORD') && workflow.includes('KEY_ALIAS') && workflow.includes('KEY_PASSWORD') && workflow.includes('缺少 release 签名 Secrets') && workflow.includes('exit 1'))
-check('Release 只放签名后的 release 包（不是 debug 包）', workflow.includes('files: android/app/build/outputs/apk/release/长江现场水印相机v3.1.0.apk'))
+check('Release 只放签名后的 release 包（不是 debug 包）', workflow.includes('files: android/app/build/outputs/apk/release/长江现场水印相机v3.1.1.apk'))
 check('debug 构建保留（assembleDebug + debug artifact，供平时测试）', workflow.includes('assembleDebug') && workflow.includes('debug-apk'))
 check('versionCode 按 package.json 自动算（cap add 会重置成 1，不算会被商店拒收更新）', workflow.includes('versionCode') && workflow.includes('major * 10000') && workflow.includes('set-version'))
 const listing = existsSync(join(root, 'docs/STORE-LISTING.md')) ? readFileSync(join(root, 'docs/STORE-LISTING.md'), 'utf8') : ''
@@ -288,10 +288,10 @@ check('dist 里有隐私政策/用户协议页（构建产物）', existsSync(jo
 // 8. v3.0.0：原生相机预览 + 全屏 UI + 水印透明度 + 相册滑动 + 内置 Key + OTA（Gitee）
 // + 版本显示 + 键盘避让 + 联系邮箱展示 + 去谷歌框架 + 相册搜索 + 安装权限引导
 const versionJs = readFileSync(join(root, 'src/version.js'), 'utf8')
-check('版本信息模块 version.js（3.1.0/30100/2026-11-20，App 内显示 + OTA 共用）', versionJs.includes("'3.1.0'") && versionJs.includes('30100') && versionJs.includes('2026-11-20') && versionJs.includes('APP_VERSION'))
+check('版本信息模块 version.js（3.1.1/30101/2026-11-20，App 内显示 + OTA 共用）', versionJs.includes("'3.1.1'") && versionJs.includes('30101') && versionJs.includes('2026-11-20') && versionJs.includes('APP_VERSION'))
 let versionJson = null
 try { versionJson = JSON.parse(readFileSync(join(root, 'version.json'), 'utf8')) } catch (e) { /* ignore */ }
-check('根目录 version.json（3.1.0/30100 + Gitee apkUrl）', versionJson && versionJson.version === '3.1.0' && versionJson.versionCode === 30100 && versionJson.apkUrl.includes('gitee.com/alf1e/field-watermark-app') && versionJson.apkUrl.includes('v3.1.0'))
+check('根目录 version.json（3.1.1/30101 + Gitee apkUrl）', versionJson && versionJson.version === '3.1.1' && versionJson.versionCode === 30101 && versionJson.apkUrl.includes('gitee.com/alf1e/field-watermark-app') && versionJson.apkUrl.includes('v3.1.1'))
 const otaJs = readFileSync(join(root, 'src/utils/ota.js'), 'utf8')
 check('OTA 模块（Gitee 真实地址 alf1e、versionCode 比较、downloadFile 下载、安装器安装）', otaJs.includes('gitee.com/alf1e/field-watermark-app') && otaJs.includes('OTA_VERSION_URL') && otaJs.includes('versionCode') && otaJs.includes('downloadFile') && otaJs.includes('FileOpener'))
 check('OTA 安装前查“安装未知应用”权限（canRequestPackageInstalls + NO_INSTALL_PERMISSION）', otaJs.includes('canInstallUnknownApps') && otaJs.includes('canRequestPackageInstalls') && otaJs.includes('NO_INSTALL_PERMISSION') && otaJs.includes('requestInstallPermission'))
@@ -307,7 +307,7 @@ check('版本显示（WorksList 含 APP_VERSION、releaseDate、检查更新、�
 check('定位不再用 @capacitor/geolocation（依赖已删、geo.js 无原生导入、只走 navigator.geolocation）', !pkg.dependencies['@capacitor/geolocation'] && !geoJs.includes("import('@capacitor/geolocation')") && geoJs.includes('navigator.geolocation') && !(cap.plugins && cap.plugins.Geolocation))
 check('相册搜索（顶部搜索框、项目/地址/日期过滤、项目优先、不区分大小写、无结果提示）', works.includes('search-bar') && works.includes('searchText') && works.includes('matchScore') && works.includes('filteredRecords') && works.includes('toLowerCase') && works.includes('没有找到相关照片') && css.includes('.search-bar'))
 check('原生预览下视频仍走网页路线（录像水印保得住：切录像停原生预览开网页流）', cam.includes("await stopNativePreview()") && cam.includes("mode.value = 'video'") && cam.includes('getRecAudioTrack'))
-check('README 已更新到 3.1.0（版本号/OTA GitHub 备用/去谷歌框架/搜索，无 7 次编辑口径）', readme.includes('3.1.0') && readme.includes('gitee.com/alf1e/field-watermark-app') && !readme.includes('7 次') && !readme.includes('重烧'))
+check('README 已更新到 3.1.1（版本号/OTA GitHub 备用/去谷歌框架/搜索，无 7 次编辑口径）', readme.includes('3.1.1') && readme.includes('gitee.com/alf1e/field-watermark-app') && !readme.includes('7 次') && !readme.includes('重烧'))
 
 // 9. v3.0.1：拍摄页按第五版效果图重做（顶栏 + 3:4 取景 + 模式药丸 + 快门无文字）
 // + 网页版详情页图片裂开修复 + 菜单按钮打开设置页
@@ -352,7 +352,21 @@ check('滑动变焦走插件 setZoomRatio（变焦范围来自插件返回的 zo
 check('详情左右滑有过渡动画（照片跟手 detailDragX、松手滑到下一张 goDetailAnimated、弹回、CSS will-change）', works.includes('onDetailPointerMove') && works.includes('detailDragX') && works.includes('detailImgStyle') && works.includes('goDetailAnimated') && css.includes('will-change: transform'))
 check('系统相册后台同步：deferGallery 只在原生端生效，写完更新记录并通知相册页刷新', cam.includes('deferGallery') && cam.includes('galleryPending') && cam.includes('fw-records-changed'))
 const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8')
-check('CHANGELOG.md 最上面有 v3.1.0（Camera2 集成/超广角/长焦/滑动变焦/左右滑过渡动画/拍照提速）', changelog.includes('## v3.1.0') && changelog.includes('Camera2') && changelog.includes('超广角') && changelog.includes('过渡动画'))
+check('CHANGELOG.md 最上面有 v3.1.1（修闪退/引擎可空/后台线程异常）', changelog.indexOf('## v3.1.1') === changelog.indexOf('## v') && changelog.includes('闪退') && changelog.includes('可空'))
+
+// 13. v3.1.1：修 Camera2 插件闪退（权限弹窗后闪退、之后每次启动都闪退）
+const pluginKt = readFileSync(join(root, 'plugins/capacitor-camera2/android/src/main/java/com/gszd/capacitor/camera2/GszdCamera2Plugin.kt'), 'utf8')
+const engineKt = readFileSync(join(root, 'plugins/capacitor-camera2/android/src/main/java/com/gszd/capacitor/camera2/Camera2Engine.kt'), 'utf8')
+const infoKt = readFileSync(join(root, 'plugins/capacitor-camera2/android/src/main/java/com/gszd/capacitor/camera2/CameraInfoUtil.kt'), 'utf8')
+check('插件 engine 不再是 lateinit（可空 var，load() 失败也不崩启动）', pluginKt.includes('private var engine: Camera2Engine? = null') && !pluginKt.includes('lateinit var engine'))
+check('生命周期方法判空 engine（handleOnPause/Resume/ConfigurationChanged/Destroy）', pluginKt.includes('val eng = engine ?: return') && pluginKt.includes('engine?.shutdown()'))
+check('全部 @PluginMethod 判空或默认 engine（startPreview/stopPreview/switchCamera/变焦/拍照/闪光灯/对焦/曝光/状态）', !pluginKt.match(/[^?]engine\.(isRunning|start|stop|getZoomRange|getExposureRange|setZoomRatio|tapToFocus|capture|setFlashMode|getSupportedFlashModes|setExposureCompensation|updatePreviewTransform|shutdown)/) && pluginKt.includes('camera engine unavailable'))
+check('ensurePreviewContainer 不再 !!/强转（activity/webView/parent 判空抛错由 startPreview 接住）', !pluginKt.includes('bridge.activity!!') && !pluginKt.includes('as ViewGroup') && pluginKt.includes('as? ViewGroup'))
+check('引擎 cameraManager 可空（getSystemService 拿不到也不在构造器里崩）', engineKt.includes('private var cameraManager: CameraManager?') && engineKt.includes('as? CameraManager'))
+check('引擎 start 回调只触发一次（reported 守卫）且 startOnBackground 包顶层 try/catch', engineKt.includes('var reported = false') && engineKt.includes('start failed: ${e.message}'))
+check('引擎 openCamera 捕 InterruptedException、createCaptureSession 判空 surfaceTexture 并捕 IllegalStateException', engineKt.includes('InterruptedException') && engineKt.includes('preview surface gone') && engineKt.includes('camera closed'))
+check('引擎 updatePreviewRequest/capture/tapToFocus 捕 IllegalStateException，chooseCaptureSize 去掉 !!', engineKt.includes('session closed') && !engineKt.includes('maxByOrNull { it.width * it.height }!!'))
+check('CameraInfoUtil 不再强转 CameraManager（拿不到返回空列表）', infoKt.includes('as? CameraManager') && infoKt.includes('?: return emptyList()'))
 
 // 6. 构建产物（需先跑 npm run build）
 check('dist/index.html 存在', existsSync(join(dist, 'index.html')))

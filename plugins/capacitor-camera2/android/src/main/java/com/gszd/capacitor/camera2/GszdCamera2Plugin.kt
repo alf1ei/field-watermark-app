@@ -54,7 +54,18 @@ import com.getcapacitor.annotation.Permission
 )
 class GszdCamera2Plugin : Plugin() {
 
-    private lateinit var engine: Camera2Engine
+    /**
+     * Camera engine. Nullable on purpose: load() may run before the
+     * Activity/Context is ready (or fail), and Capacitor dispatches
+     * handleOnPause/handleOnResume/handleOnConfigurationChanged to every
+     * registered plugin with no try/catch — a lateinit var accessed
+     * before init throws UninitializedPropertyAccessException and kills
+     * the process (v3.1.0: permission dialog pauses the Activity right
+     * after startup, before the plugin was ever used). Every access site
+     * below treats a null engine as "camera unavailable" and rejects
+     * cleanly instead of crashing.
+     */
+    private var engine: Camera2Engine? = null
     private var containerView: FrameLayout? = null
     private var textureView: TextureView? = null
     private var containerViewId: Int = 0
@@ -80,16 +91,36 @@ class GszdCamera2Plugin : Plugin() {
     override fun load() {
         super.load()
         containerViewId = View.generateViewId()
-        engine = Camera2Engine(bridge.activity.applicationContext)
-        engine.listener = object : Camera2Engine.Listener {
-            override fun onPreviewFirstFrame() {}
-            override fun onError(message: String) {
-                android.util.Log.w("GszdCamera2", message)
-            }
+        // Never let engine init kill the plugin registration: bridge.activity
+        // can be null this early, and a throwing load() would leave the
+        // plugin unregistered (or worse, crash startup). A null engine just
+        // makes every call reject cleanly.
+        val ctx = try {
+            bridge.activity?.applicationContext
+                ?: bridge.context?.applicationContext
+        } catch (e: Exception) {
+            null
+        }
+        if (ctx == null) {
+            android.util.Log.e("GszdCamera2", "load: no context available, engine unavailable")
+            return
+        }
+        try {
+            engine = Camera2Engine(ctx).also { eng ->
+                eng.listener = object : Camera2Engine.Listener {
+                    override fun onPreviewFirstFrame() {}
+                    override fun onError(message: String) {
+                        android.util.Log.w("GszdCamera2", message)
+                    }
 
-            override fun onCameraDisconnected() {
-                android.util.Log.w("GszdCamera2", "camera disconnected")
+                    override fun onCameraDisconnected() {
+                        android.util.Log.w("GszdCamera2", "camera disconnected")
+                    }
+                }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("GszdCamera2", "load: engine init failed", e)
+            engine = null
         }
     }
 
@@ -182,6 +213,10 @@ class GszdCamera2Plugin : Plugin() {
 
         activity.runOnUiThread {
             try {
+                val eng = engine ?: run {
+                    call.reject("camera engine unavailable")
+                    return@runOnUiThread
+                }
                 val view = ensurePreviewContainer(x, y, w, h, toBack)
                 previewRectPx = Rect(x, y, x + w, y + h)
                 if (enableZoom) installTouchForwarding() else uninstallTouchForwarding()
@@ -191,7 +226,7 @@ class GszdCamera2Plugin : Plugin() {
                 }
                 call.setKeepAlive(true)
                 pendingStartCall = call
-                engine.start(target.id, view, lastCaptureWidth, lastCaptureHeight) { ok, reason ->
+                eng.start(target.id, view, lastCaptureWidth, lastCaptureHeight) { ok, reason ->
                     val pending = pendingStartCall
                     pendingStartCall = null
                     if (pending == null) return@start
@@ -222,7 +257,7 @@ class GszdCamera2Plugin : Plugin() {
                 previousOrientationRequest = -1
             }
         }
-        engine.stop()
+        engine?.stop()
         wasRunningBeforePause = false
         call.resolve()
     }
@@ -233,7 +268,7 @@ class GszdCamera2Plugin : Plugin() {
             call.reject("no activity")
             return
         }
-        if (textureView == null || !engine.isRunning) {
+        if (textureView == null || engine?.isRunning != true) {
             call.reject("preview is not running")
             return
         }
@@ -270,8 +305,19 @@ class GszdCamera2Plugin : Plugin() {
         currentCameraId = target.id
         call.setKeepAlive(true)
         pendingStartCall = call
-        val view = textureView!!
-        engine.start(target.id, view, lastCaptureWidth, lastCaptureHeight) { ok, reason ->
+        // textureView was null-checked above; take a local copy so a
+        // concurrent stop() (which nulls it) can't NPE this call.
+        val view = textureView ?: run {
+            pendingStartCall = null
+            call.reject("preview is not running")
+            return
+        }
+        val eng = engine ?: run {
+            pendingStartCall = null
+            call.reject("camera engine unavailable")
+            return
+        }
+        eng.start(target.id, view, lastCaptureWidth, lastCaptureHeight) { ok, reason ->
             val pending = pendingStartCall
             pendingStartCall = null
             if (pending == null) return@start
@@ -286,12 +332,14 @@ class GszdCamera2Plugin : Plugin() {
         res.put("type", info.type)
         res.put("label", info.label)
         res.put("focalLengthMm", info.focalLengthMm.toDouble())
-        val (zmin, zmax) = engine.getZoomRange()
+        // Engine may be gone by the time a late callback runs; report
+        // defaults instead of crashing.
+        val (zmin, zmax) = engine?.getZoomRange() ?: (1f to 1f)
         val zr = JSObject()
         zr.put("min", zmin.toDouble())
         zr.put("max", zmax.toDouble())
         res.put("zoomRatioRange", zr)
-        val (emin, emax, estep) = engine.getExposureRange()
+        val (emin, emax, estep) = engine?.getExposureRange() ?: Triple(0, 0, 1f)
         val er = JSObject()
         er.put("min", emin)
         er.put("max", emax)
@@ -316,14 +364,18 @@ class GszdCamera2Plugin : Plugin() {
             return
         }
         activity.runOnUiThread {
-            val container = containerView
-            if (container != null) {
-                val params = FrameLayout.LayoutParams(w, h)
-                params.leftMargin = x
-                params.topMargin = y
-                container.layoutParams = params
-                previewRectPx = Rect(x, y, x + w, y + h)
-                engine.updatePreviewTransform(w, h)
+            try {
+                val container = containerView
+                if (container != null) {
+                    val params = FrameLayout.LayoutParams(w, h)
+                    params.leftMargin = x
+                    params.topMargin = y
+                    container.layoutParams = params
+                    previewRectPx = Rect(x, y, x + w, y + h)
+                    engine?.updatePreviewTransform(w, h)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("GszdCamera2", "setPreviewRect failed", e)
             }
         }
         call.resolve()
@@ -340,11 +392,15 @@ class GszdCamera2Plugin : Plugin() {
             call.reject("zoomRatio must be a number > 0")
             return
         }
-        if (!engine.isRunning) {
+        val eng = engine ?: run {
+            call.reject("camera engine unavailable")
+            return
+        }
+        if (!eng.isRunning) {
             call.reject("preview is not running")
             return
         }
-        engine.setZoomRatio(ratio) { applied ->
+        eng.setZoomRatio(ratio) { applied ->
             val res = JSObject()
             res.put("zoomRatio", applied.toDouble())
             call.resolve(res)
@@ -353,9 +409,10 @@ class GszdCamera2Plugin : Plugin() {
 
     @PluginMethod
     fun getZoomRatio(call: PluginCall) {
-        val (min, max) = engine.getZoomRange()
+        val eng = engine
+        val (min, max) = eng?.getZoomRange() ?: (1f to 1f)
         val res = JSObject()
-        res.put("zoomRatio", engine.zoomRatio.toDouble())
+        res.put("zoomRatio", (eng?.zoomRatio ?: 1f).toDouble())
         res.put("min", min.toDouble())
         res.put("max", max.toDouble())
         call.resolve(res)
@@ -363,13 +420,17 @@ class GszdCamera2Plugin : Plugin() {
 
     @PluginMethod
     fun capture(call: PluginCall) {
-        if (!engine.isRunning) {
+        val eng = engine ?: run {
+            call.reject("camera engine unavailable")
+            return
+        }
+        if (!eng.isRunning) {
             call.reject("preview is not running")
             return
         }
         val quality = call.getInt("quality", 90) ?: 90
         call.setKeepAlive(true)
-        engine.capture(quality) { result ->
+        eng.capture(quality) { result ->
             result.onSuccess { file ->
                 val res = JSObject()
                 res.put("path", file.path)
@@ -389,20 +450,21 @@ class GszdCamera2Plugin : Plugin() {
             call.reject("flashMode must be one of off/on/auto/torch")
             return
         }
-        if (!engine.isRunning) {
+        val eng = engine
+        if (eng == null || !eng.isRunning) {
             // Remember it for the next start (the app sets flash before the
             // preview is up in some flows); the engine applies it on start.
             call.resolve()
             return
         }
-        engine.setFlashMode(mode) { ok ->
+        eng.setFlashMode(mode) { ok ->
             if (ok) call.resolve() else call.reject("setFlashMode failed")
         }
     }
 
     @PluginMethod
     fun getSupportedFlashModes(call: PluginCall) {
-        val modes = engine.getSupportedFlashModes()
+        val modes = engine?.getSupportedFlashModes() ?: listOf("off")
         val arr = JSArray()
         for (m in modes) arr.put(m)
         val res = JSObject()
@@ -418,7 +480,8 @@ class GszdCamera2Plugin : Plugin() {
             call.reject("x and y (normalized 0..1) are required")
             return
         }
-        engine.tapToFocus(x, y)
+        // Fire-and-forget: a missing engine is a silent no-op, not an error.
+        engine?.tapToFocus(x, y)
         call.resolve()
     }
 
@@ -429,7 +492,11 @@ class GszdCamera2Plugin : Plugin() {
             call.reject("value (EV) is required")
             return
         }
-        engine.setExposureCompensation(value) { applied ->
+        val eng = engine ?: run {
+            call.reject("camera engine unavailable")
+            return
+        }
+        eng.setExposureCompensation(value) { applied ->
             val res = JSObject()
             res.put("value", applied.toDouble())
             call.resolve(res)
@@ -439,7 +506,7 @@ class GszdCamera2Plugin : Plugin() {
     @PluginMethod
     fun isPreviewStarted(call: PluginCall) {
         val res = JSObject()
-        res.put("value", engine.isRunning)
+        res.put("value", engine?.isRunning ?: false)
         call.resolve(res)
     }
 
@@ -449,9 +516,14 @@ class GszdCamera2Plugin : Plugin() {
 
     override fun handleOnPause() {
         super.handleOnPause()
-        if (engine.isRunning) {
+        // Guarded: Capacitor dispatches this to every registered plugin
+        // with no try/catch, and it fires when the permission dialog
+        // appears — before the plugin was ever used. A null engine is
+        // a no-op, never a crash.
+        val eng = engine ?: return
+        if (eng.isRunning) {
             wasRunningBeforePause = true
-            engine.stop()
+            eng.stop()
         }
     }
 
@@ -459,12 +531,13 @@ class GszdCamera2Plugin : Plugin() {
         super.handleOnResume()
         if (!wasRunningBeforePause) return
         wasRunningBeforePause = false
+        val eng = engine ?: return
         val view = textureView
         val id = currentCameraId
         if (view != null && id != null) {
             // Best effort: the app's resumeCameraView() also checks
             // isPreviewStarted() and restarts when needed.
-            engine.start(id, view, lastCaptureWidth, lastCaptureHeight) { ok, reason ->
+            eng.start(id, view, lastCaptureWidth, lastCaptureHeight) { ok, reason ->
                 if (!ok) android.util.Log.w("GszdCamera2", "resume reopen failed: $reason")
             }
         }
@@ -472,19 +545,21 @@ class GszdCamera2Plugin : Plugin() {
 
     override fun handleOnConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.handleOnConfigurationChanged(newConfig)
+        val eng = engine ?: return
         val view = textureView
-        if (view != null && engine.isRunning) {
-            engine.updatePreviewTransform(view.width, view.height)
+        if (view != null && eng.isRunning) {
+            eng.updatePreviewTransform(view.width, view.height)
         }
     }
 
     override fun handleOnDestroy() {
         super.handleOnDestroy()
         try {
-            engine.shutdown()
+            engine?.shutdown()
         } catch (e: Exception) {
             // ignore
         }
+        engine = null
         val activity = bridge?.activity
         activity?.runOnUiThread { removePreviewContainer() }
     }
@@ -499,8 +574,9 @@ class GszdCamera2Plugin : Plugin() {
 
     /** Create (or reuse) the container + TextureView behind the WebView. Runs on the UI thread. */
     private fun ensurePreviewContainer(x: Int, y: Int, w: Int, h: Int, toBack: Boolean): TextureView {
-        val activity = bridge.activity!!
-        val parent = bridge.webView.parent as ViewGroup
+        val activity = bridge.activity ?: throw IllegalStateException("no activity")
+        val webView = bridge.webView ?: throw IllegalStateException("no webView")
+        val parent = webView.parent as? ViewGroup ?: throw IllegalStateException("webView has no parent")
         var container = containerView
         var view = textureView
         if (container == null || view == null) {
@@ -513,17 +589,18 @@ class GszdCamera2Plugin : Plugin() {
             ))
             containerView = container
             textureView = view
-            bridge.webView.setBackgroundColor(Color.TRANSPARENT)
+            webView.setBackgroundColor(Color.TRANSPARENT)
             parent.addView(container)
             if (toBack) {
-                parent.bringChildToFront(bridge.webView)
+                parent.bringChildToFront(webView)
             }
         }
         val params = FrameLayout.LayoutParams(w, h)
         params.leftMargin = x
         params.topMargin = y
         container.layoutParams = params
-        return view!!
+        // container/view were just created or re-fetched non-null above.
+        return view ?: throw IllegalStateException("preview view missing")
     }
 
     private fun removePreviewContainer() {
@@ -577,19 +654,23 @@ class GszdCamera2Plugin : Plugin() {
                 activity,
                 object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-                        gestureStartZoom = engine.zoomRatio
+                        // Touch callbacks run on the UI thread; a missing
+                        // engine must not crash the app.
+                        val eng = engine ?: return false
+                        gestureStartZoom = eng.zoomRatio
                         lastPinchApplied = gestureStartZoom
                         return true
                     }
 
                     override fun onScale(detector: ScaleGestureDetector): Boolean {
-                        val (min, max) = engine.getZoomRange()
+                        val eng = engine ?: return true
+                        val (min, max) = eng.getZoomRange()
                         val target = (gestureStartZoom * detector.scaleFactor).coerceIn(min, max)
                         // Throttle: the engine round-trips to a background
                         // thread, so only forward meaningful changes.
                         if (kotlin.math.abs(target - lastPinchApplied) < 0.05f) return true
                         lastPinchApplied = target
-                        engine.setZoomRatio(target) {}
+                        eng.setZoomRatio(target) {}
                         return true
                     }
                 }
@@ -600,11 +681,12 @@ class GszdCamera2Plugin : Plugin() {
                 activity,
                 object : GestureDetector.SimpleOnGestureListener() {
                     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        val eng = engine ?: return false
                         val r = previewRectPx
                         if (r.width() <= 0 || r.height() <= 0) return false
                         val nx = ((e.x - r.left) / r.width()).coerceIn(0f, 1f)
                         val ny = ((e.y - r.top) / r.height()).coerceIn(0f, 1f)
-                        engine.tapToFocus(nx, ny)
+                        eng.tapToFocus(nx, ny)
                         return true
                     }
                 }

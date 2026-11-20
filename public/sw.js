@@ -4,7 +4,7 @@
  * 跨域请求（高德/ Nominatim 逆地理编码）不拦截，直接走网络。
  * 更新机制：新 SW 安装后立即接管，页面监听到接管后自动刷新一次。
  */
-const CACHE = 'fw-pwa-v18'
+const CACHE = 'fw-pwa-v19'
 const CORE = [
   './',
   './index.html',

@@ -36,5 +36,5 @@
     "verify:pwa": "node scripts/verify-pwa.mjs"
   },
   "type": "module",
-  "version": "3.1.0"
+  "version": "3.1.1"
 }

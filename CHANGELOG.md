@@ -2,6 +2,13 @@
 
 每次发版的改动都记在这里，最新版本在最上面。
 
+## v3.1.1（2026-11-20）
+
+- 修 v3.1.0 闪退：App 弹权限后闪退，之后每次启动都闪退。根因是 Camera2 插件的 `engine` 用 `lateinit var`，权限弹窗（独立 Activity）触发 `onPause`/`onResume` 时插件还没被用过，`handleOnPause` 直接访问未初始化的 engine 抛 `UninitializedPropertyAccessException`；Capacitor 对插件方法异常是重抛 `RuntimeException`、生命周期回调又没有任何 try/catch，一次就杀进程
+- 插件 engine 改可空（`Camera2Engine?`）：`load()` 空安全（拿不到 Context 也不崩启动），`handleOnPause`/`handleOnResume`/`handleOnConfigurationChanged`/`handleOnDestroy` 全部判空，12 个插件方法与触摸回调（捏合变焦/点按对焦）无 engine 时干净 reject 或静默返回，不再抛异常
+- 引擎后台线程不再杀进程：`start` 回调只触发一次（reported 守卫）+ `startOnBackground` 包顶层 try/catch；`openCamera` 捕 `InterruptedException`；`createCaptureSession` 判空 surfaceTexture、捕 `IllegalStateException`；`updatePreviewRequest`/`capture`/`tapToFocus` 捕 `IllegalStateException`；`chooseCaptureSize` 去掉 `!!`（JPEG 尺寸为空时退回预览尺寸）；`cameraManager` 可空
+- `CameraInfoUtil.listCameras` 不再强转 CameraManager（拿不到返回空列表）
+
 ## v3.1.0（2026-11-20）
 
 - Camera2 插件接管拍照预览：自研 `@gszd/capacitor-camera2` 插件（Android Camera2 原生接口），替代 camera-preview；镜头面板列出手机全部镜头（超广角/长焦/主摄/前置，带焦距和变焦范围），点一下就能切换
