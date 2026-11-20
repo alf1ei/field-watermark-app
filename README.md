@@ -19,9 +19,9 @@
 
 ## 技术栈
 
-Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 3.0.3。
+Vue 3 + Vite 6 + Capacitor 7（`@capacitor/core 7.6`）。包名 `com.gszd.fieldwatermark`，应用名 `长江现场水印相机`，版本 3.1.0。
 
-- 相机：拍照用 `@capacitor-community/camera-preview` 原生预览（toBack，WebView 背景透明，HTML 浮层在上；双指捏合变焦、前后切换、闪光灯走插件接口；录像仍走网页路线）；网页 `getUserMedia` 取景作兜底（镜头面板列出手机全部摄像头，可切换、调变焦；读不到时自动重试、打开面板重读、也可手动重读，实在读不到时按前后方向切换）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。
+- 相机：拍照用自研 `@gszd/capacitor-camera2` 插件（Android Camera2 原生接口，toBack，WebView 背景透明，HTML 浮层在上；镜头面板列出手机全部镜头——超广角/长焦/主摄/前置，带焦距和变焦范围，点一下切换；滑动变焦条连续变焦、双指捏合变焦、闪光灯、点按对焦走插件接口；拍照直接写文件不走 base64；录像仍走网页路线）；网页 `getUserMedia` 取景作兜底（镜头面板列出手机全部摄像头，可切换、调变焦；读不到时自动重试、打开面板重读、也可手动重读，实在读不到时按前后方向切换）+ 系统相机/相册兜底（`@capacitor/camera`，选图后同样烧水印）。
 - 定位：浏览器 `navigator.geolocation`（v3.0.0 起不再用 `@capacitor/geolocation`，安装包不再含谷歌服务定位）；定位权限走 WebView 首次调用时的系统弹窗，相机权限仍走原生侧；首次启动先定位、再相机，两个弹窗错开。
 - 存储：`@capacitor/filesystem`（`Directory.Data/works/`）+ localStorage 记录列表；相册保存用 `@capacitor-community/media`（走系统 MediaStore），失败时退到外部共享目录，再失败则只存 App 内并明确提示。
 - 版本信息：`src/version.js` 集中维护 version / versionCode / releaseDate，设置页显示当前版本、更新时间、联系邮箱；OTA 的 `version.json` 跟着版本同步更新。
@@ -149,7 +149,7 @@ base64 -w0 field-watermark-release.keystore
 | `KEY_ALIAS` | `gszd`（和生成时 -alias 一致） |
 | `KEY_PASSWORD` | key 的密码（一般和 keystore 密码相同） |
 
-**工作流行为了如上**：`assembleDebug` 照常打（debug 包只进 artifact，供测试）；然后检查四个 Secrets，缺任何一个就**明确报错、整个构建失败，不悄悄回落到 debug 包**；齐全时打 `assembleRelease`，用 `apksigner` 签名并校验；Release 里只放签名后的 release 包（`长江现场水印相机v3.0.3.apk`）。另外工作流每次按 `major*10000+minor*100+patch` 自动算 `versionCode`（3.0.3 → 30003），商店更新要求 versionCode 递增，`cap add android` 每次都会把它重置成 1，不自动算就会被商店拒收更新。
+**工作流行为了如上**：`assembleDebug` 照常打（debug 包只进 artifact，供测试）；然后检查四个 Secrets，缺任何一个就**明确报错、整个构建失败，不悄悄回落到 debug 包**；齐全时打 `assembleRelease`，用 `apksigner` 签名并校验；Release 里只放签名后的 release 包（`长江现场水印相机v3.1.0.apk`）。另外工作流每次按 `major*10000+minor*100+patch` 自动算 `versionCode`（3.1.0 → 30100），商店更新要求 versionCode 递增，`cap add android` 每次都会把它重置成 1，不自动算就会被商店拒收更新。
 
 ### 上架物料
 
@@ -178,7 +178,7 @@ App 内自更新，不走应用商店：启动时自动检查一次，设置页�
 ## 已验证
 
 - `npm run verify`：77/77 通过。DMS：`106.9359, 36.0559 → 106°56′09″E / 36°03′21″N`；水印绘制指令：GSZD -30° 旋转、底部黑条、项目名/时间/经纬度/地址均已写入，地址为空时不编造；GCJ-02：天安门偏移约 555 米（正常量级），境外坐标不偏移；水印透明度默认 0.2（0.1–0.6 可调，越界夹取）。
-- `npm run verify:pwa`：228/228 通过（v3.0.3 全部新检查在内：OTA GitHub 备用地址、快门圆角矩形、详情苹果相册手势、项目名历史下拉、拍照提速关键点、烧水印 2 次编码、相册背景不透明；另含 v3.0.2 的顶区实底、椭圆按钮、三行对齐、点按切换镜头、拍照震动、详情仅图片+上滑信息板；另含 v3.0.1 的拍摄页新布局、模式药丸系统相机段、快门无文字、网页版详情页 data URL、菜单按钮打开设置页、原生相机预览、串行权限、OTA 安装权限引导、键盘避让、版本显示、相册搜索与滑动、去谷歌框架）。
+- `npm run verify:pwa`：236/236 通过（v3.1.0 全部新检查在内：Camera2 插件调用与镜头面板、1× 打开镜头面板、详情左右滑过渡动画、原图复用拍摄文件、系统相册后台同步、CHANGELOG v3.1.0；另含 v3.0.3 的 OTA GitHub 备用地址、快门圆角矩形、详情苹果相册手势、项目名历史下拉、拍照提速关键点、烧水印 2 次编码、相册背景不透明；另含 v3.0.2 的顶区实底、椭圆按钮、三行对齐、点按切换镜头、拍照震动、详情仅图片+上滑信息板；另含 v3.0.1 的拍摄页新布局、模式药丸系统相机段、快门无文字、网页版详情页 data URL、菜单按钮打开设置页、原生相机预览、串行权限、OTA 安装权限引导、键盘避让、版本显示、相册搜索与滑动、去谷歌框架）。
 - 真实像素渲染：`scripts/render-sample.mjs`（node-canvas）输出样图 `scripts/sample-watermarked.jpg`，像素断言通过（底部黑条亮度 47、中央 GSZD 亮字 244）。
 - `vite build` 通过；`npx cap sync android` 通过（versionName 1.0.0、包名、权限清单均已核对）；APK 待权限放开后跑 `bash scripts/build-apk.sh` 打出，见上节。
 
@@ -193,6 +193,7 @@ App 内自更新，不走应用商店：启动时自动检查一次，设置页�
 - v3.0.1 新增（未真机验证）：拍摄页新布局（顶部项目名称 + 四个圆钮、3:4 取景、模式药丸系统相机段走原生系统相机、快门无文字）、网页版详情页图片修复（需网页版复核）
 - v3.0.2 新增（未真机验证）：拍摄页按第七版效果图（四个控制按钮、快门、比例、变焦全改横向椭圆，模式药丸/快门行/底部导航三行对齐，顶区实底不透预览）、点按变焦按钮切换前后镜头、相册详情只显示图片（上滑出信息板）、拍照后轻震一下
 - v3.0.3 新增（未真机验证）：OTA 检查失败改走 GitHub 备用地址并重试；项目名直接在顶栏输入、最近项目下拉快速选择；预览所见即所得（取景框就是成片框）；快门改圆角矩形；相册详情改苹果相册手势（左右滑换照片、上下滑退出、点一下出信息板、删除放右上角）；拍照提速（点快门立刻震动+白闪、拍照不等定位、存储并行、3:4 输出 1800×2400）；修相册背景变相机预览的 bug
+- v3.1.0 新增（未真机验证）：Camera2 插件接管拍照预览（多镜头切换、滑动变焦手感、各品牌手机兼容、后台/前台切换、闪光灯、点按对焦、输出尺寸、拍照速度）；相册详情左右滑过渡动画手感；拍照再提速（拍照直接写文件不走 base64、原图复用拍摄文件、系统相册后台同步）
 
 ## 图标说明
 App 图标是冰蓝色半透明浪花书法“长江”字 + 深蓝光圈泼墨底（assets/icon.png，1024×1024；自适应图标背景 assets/icon-background.png，深蓝 #001C40）。图标类文件是二进制，未随云端打包快照推送；GitHub Actions 构建时在 cap sync 之后跑 `npx @capacitor/assets generate --android`，从这两张图生成 Android 启动图标（mipmap ic_launcher / ic_launcher_foreground / ic_launcher_background）。
