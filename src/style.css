@@ -449,6 +449,8 @@ body.native-preview .works { background: #0b1220; }
   -webkit-user-drag: none; user-drag: none;
   -webkit-user-select: none; user-select: none;
   -webkit-touch-callout: none;
+  /* v3.1.0：左右滑过渡动画时照片跟手 + 滑入滑出，transform 合成层更顺滑 */
+  will-change: transform;
 }
 /* 信息板打开时照片区顶部留出删除按钮的位置（状态栏 + 按钮高），照片不顶到删除钮下面 */
 .detail-mask.sheet-open .view { padding-top: calc(max(env(safe-area-inset-top, 0px), 32px) + 54px); }

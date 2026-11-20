@@ -141,8 +141,8 @@
     <button class="detail-delete" @click="deleteDetail" title="删除" aria-label="删除这张照片">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /></svg>
     </button>
-    <div class="view detail-view" @pointerdown="onDetailPointerDown" @pointerup="onDetailPointerUp" @pointercancel="onDetailPointerCancel">
-      <img v-if="detail.type === 'photo'" :src="detailUrl" draggable="false" @click="onDetailImageTap" />
+    <div class="view detail-view" ref="detailViewEl" @pointerdown="onDetailPointerDown" @pointermove="onDetailPointerMove" @pointerup="onDetailPointerUp" @pointercancel="onDetailPointerCancel">
+      <img v-if="detail.type === 'photo'" :src="detailUrl" :style="detailImgStyle" draggable="false" @click="onDetailImageTap" />
       <video v-else :src="detailUrl" controls autoplay></video>
     </div>
     <div class="detail-sheet" :class="{ open: infoSheetOpen }">
@@ -212,7 +212,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory } from '@capacitor/filesystem'
 import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
@@ -235,6 +235,21 @@ const records = ref([])
 const detail = ref(null)
 const detailUrl = ref('')
 const detailFolder = ref('')
+// 详情左右滑过渡动画（v3.1.0，苹果相册那样）：照片跟着手指走，松手滑到下一张或弹回原位
+const detailViewEl = ref(null)
+const detailDragX = ref(0) // 当前拖动的横向位移（px），跟手
+const detailDragAnim = ref(false) // 是否正在做滑动过渡动画（有 transition；跟手时不开）
+let detailDragActive = false // 本次 pointer 是否已进入横向拖动
+let detailAnimating = false // 正在换页动画中，忽略新的拖动
+const detailImgStyle = computed(() => ({
+  transform: detailDragX.value ? `translateX(${detailDragX.value}px)` : '',
+  transition: detailDragAnim.value ? 'transform .28s cubic-bezier(.32,.72,.35,1)' : 'none'
+}))
+function detailViewWidth() {
+  const el = detailViewEl.value
+  if (el && el.clientWidth) return el.clientWidth
+  return window.innerWidth || 390
+}
 // 详情信息板（v3.0.2）：默认收起（只显示图片），上滑/点手柄打开，下滑/点手柄/点图片收起
 const infoSheetOpen = ref(false)
 const toast = ref('')
@@ -325,6 +340,10 @@ function closeDetail() {
   removeBackOverlay('works-detail')
   infoSheetOpen.value = false
   detail.value = null
+  detailDragActive = false
+  detailDragAnim.value = false
+  detailDragX.value = 0
+  detailAnimating = false
 }
 function openDetailEdit() {
   const rec = detail.value
@@ -643,12 +662,12 @@ async function fileSrc(it) {
   }
 }
 
-async function openDetail(it) {
+async function openDetail(it, preloadedUrl) {
   detailTapCount = 0 // 换一张照片重数，避免上一张的点击数带过来
   infoSheetOpen.value = false // 换一张照片先收起信息板，只显示图片
   detail.value = it
   detailFolder.value = getPhotoFolder(it.id)
-  detailUrl.value = await fileSrc(it)
+  detailUrl.value = preloadedUrl || await fileSrc(it)
 }
 
 function doCreateFolder() {
@@ -743,28 +762,58 @@ async function onCheckUpdate() {
   }
 }
 
-// ---- 详情页滑动（v3.0.3 苹果相册逻辑）----
+// ---- 详情页滑动（v3.0.3 苹果相册逻辑，v3.1.0 加过渡动画）----
 // 在详情大图上左/右滑切换上一张/下一张（按列表顺序：左滑看更早的，右滑看更新的），
 // 到头给提示；上滑或下滑都直接退出详情回相册（不再开关信息板）；
 // 信息板改由点一下照片开关（见 onDetailImageTap）。‹ › 按钮和计数已取消（v3.0.2）。
+// v3.1.0 过渡动画：照片跟着手指走（pointermove 时实时设 translateX，不加 transition），
+// 松手滑够了就滑到下一张（先滑出、再从对侧滑入），没滑够就弹回原位；
 // 滑动结束后的 click 不计入 7 次点按、不开关信息板（lastSwipeAt 守卫在 onDetailImageTap 里）。
 // 方向一次判清：pointerup 时按 dx/dy 阈值只走一条分支，点按和竖滑不会抢掉横滑。
 const swipeList = computed(() => filteredRecords.value)
 const detailIndex = computed(() => (detail.value ? swipeList.value.findIndex((r) => r.id === detail.value.id) : -1))
 let detailSwipeStart = null // { x, y }：本次滑动的起点
 function onDetailPointerDown(e) {
+  if (detailAnimating) return
   detailSwipeStart = { x: e.clientX, y: e.clientY }
+  detailDragActive = false
+  detailDragAnim.value = false
+  detailDragX.value = 0
+  try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* ignore */ }
+}
+function onDetailPointerMove(e) {
+  if (!detailSwipeStart || detailAnimating) return
+  if (!detail.value || detail.value.type !== 'photo') return // 视频不做跟手动画
+  const dx = e.clientX - detailSwipeStart.x
+  const dy = e.clientY - detailSwipeStart.y
+  if (!detailDragActive) {
+    // 还没定性：横向为主且超过 10px 才算横向拖动（照片跟手）；竖向为主不跟手
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) detailDragActive = true
+    else return
+  }
+  const w = detailViewWidth()
+  detailDragAnim.value = false // 跟手时不加 transition，手指到哪照片到哪
+  detailDragX.value = Math.max(-w, Math.min(w, dx))
 }
 function onDetailPointerUp(e) {
   if (!detailSwipeStart) return
   const dx = e.clientX - detailSwipeStart.x
   const dy = e.clientY - detailSwipeStart.y
   detailSwipeStart = null
-  // 横滑：切换上一张/下一张（竖向分量小才算）
+  if (detailAnimating) return
+  // 横滑：切换上一张/下一张（竖向分量小才算），带过渡动画
   if (Math.abs(dx) >= 60 && Math.abs(dy) <= 50) {
     lastSwipeAt = Date.now()
-    if (dx < 0) goDetailNext()
-    else goDetailPrev()
+    if (dx < 0) goDetailAnimated('next')
+    else goDetailAnimated('prev')
+    return
+  }
+  if (detailDragActive) {
+    // 横向拖过但没滑够：弹回原位；这次不是点按，click 不开关信息板
+    detailDragActive = false
+    lastSwipeAt = Date.now()
+    detailDragAnim.value = true
+    detailDragX.value = 0
     return
   }
   // 竖滑：上滑或下滑都直接退出详情回相册（横向分量小才算）；
@@ -776,16 +825,55 @@ function onDetailPointerUp(e) {
 }
 function onDetailPointerCancel() {
   detailSwipeStart = null
+  detailDragActive = false
+  detailDragAnim.value = true
+  detailDragX.value = 0
 }
-function goDetailPrev() {
+// 左右滑换页的过渡动画：当前照片滑出（立刻开始），滑出期间把下一张预加载并解码好，
+// 再换照片、从对侧滑入；到头时弹回原位并提示；视频不做动画，直接换。
+async function goDetailAnimated(dir) {
+  if (detailAnimating) return
   const i = detailIndex.value
-  if (i <= 0) { showToast('已经是第一张了'); return }
-  openDetail(swipeList.value[i - 1])
-}
-function goDetailNext() {
-  const i = detailIndex.value
-  if (i < 0 || i >= swipeList.value.length - 1) { showToast('已经是最后一张了'); return }
-  openDetail(swipeList.value[i + 1])
+  const target = dir === 'next' ? swipeList.value[i + 1] : swipeList.value[i - 1]
+  if (!target) {
+    showToast(dir === 'next' ? '已经是最后一张了' : '已经是第一张了')
+    detailDragAnim.value = true
+    detailDragX.value = 0
+    return
+  }
+  if (!detail.value || detail.value.type !== 'photo') { openDetail(target); return }
+  detailAnimating = true
+  const w = detailViewWidth()
+  // 1. 当前照片滑出（跟着松手方向，立刻开始）
+  detailDragAnim.value = true
+  detailDragX.value = dir === 'next' ? -w : w
+  // 2. 滑出期间把下一张预加载并解码好（和滑出动画并行跑，取较长者）
+  const preload = (async () => {
+    let url = ''
+    try { url = await fileSrc(target) } catch { url = '' }
+    if (url) {
+      await new Promise((resolve) => {
+        const im = new Image()
+        im.onload = resolve
+        im.onerror = resolve
+        im.src = url
+      })
+    }
+    return url
+  })()
+  const [url] = await Promise.all([preload, new Promise((r) => setTimeout(r, 280))])
+  // 3. 换照片：先无动画放到对侧，再滑回原位
+  await openDetail(target, url)
+  detailDragAnim.value = false
+  detailDragX.value = dir === 'next' ? w : -w
+  await nextTick()
+  // 强制一次重排，让“放到对侧”这帧真正生效，再开 transition 滑回原位
+  void detailViewEl.value?.offsetWidth
+  detailDragAnim.value = true
+  detailDragX.value = 0
+  await new Promise((r) => setTimeout(r, 280))
+  detailDragAnim.value = false
+  detailAnimating = false
 }
 
 async function shareDetail() {

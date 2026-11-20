@@ -107,7 +107,7 @@
       </button>
       <button class="circle-btn zoom-btn" @click="onZoomBtnClick"
         @pointerdown="onZoomPressStart" @pointermove="onZoomPressMove" @pointerup="onZoomPressEnd" @pointercancel="onZoomPressEnd"
-        :title="nativeActive ? '点一下切换前后镜头（双指捏合变焦）' : '镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）'">{{ zoomLabel }}</button>
+        :title="nativeActive ? '点一下打开镜头面板（双指捏合变焦）' : '镜头 / 变焦：点一下打开面板，长按后上下滑调变焦（上滑拉进、下滑缩小）'">{{ zoomLabel }}</button>
     </div>
     <div v-if="zoomDragging" class="zoom-bubble">{{ zoomLabel }}</div>
   </div>
@@ -149,7 +149,16 @@
       </div>
       <div class="field-desc" v-else>当前摄像头不支持网页变焦（这台手机没开放变焦能力，可在上方切换镜头，或用系统相机）。</div>
       <div class="field-label">摄像头（读取手机能提供的全部摄像头）</div>
-      <div class="pick-col" v-if="cameras.length">
+      <!-- v3.1.0 原生镜头：Camera2 列出的全部镜头（主摄/超广角/长焦/前置），带焦距和变焦范围 -->
+      <div class="pick-col" v-if="nativeActive && gszdCameras.length">
+        <button v-for="c in gszdCameras" :key="c.id" :class="{ active: isCameraActive(c) }" @click="switchCamera(c)">{{ gszdCameraLabel(c) }}</button>
+      </div>
+      <div class="field-desc" v-else-if="nativeActive && gszdCamerasLoading">正在读取摄像头…</div>
+      <div v-else-if="nativeActive">
+        <div class="field-desc">没读到摄像头（这台手机暂时没把镜头列表交给 App）。</div>
+        <button class="ghost" @click="refreshGszdCameras(true)">重新读取</button>
+      </div>
+      <div class="pick-col" v-else-if="cameras.length">
         <button v-for="c in cameras" :key="c.deviceId || ('face-' + c.facing)" :class="{ active: isCameraActive(c) }" @click="switchCamera(c)">{{ c.label }}</button>
       </div>
       <div class="field-desc" v-else-if="camerasLoading">正在读取摄像头…</div>
@@ -157,7 +166,8 @@
         <div class="field-desc">没读到摄像头（这台手机暂时没把摄像头列表交给网页）。</div>
         <button class="ghost" @click="listCameras(true)">重新读取</button>
       </div>
-      <div class="field-desc">iPhone 网页版只给前/后两个摄像头，长焦/超广角苹果不开放给网页，想用长焦请用“系统相机”。</div>
+      <div class="field-desc" v-if="nativeActive">原生 Camera2 列出手机全部镜头，点一行切换；前后切换也在“更多”菜单里。</div>
+      <div class="field-desc" v-else>iPhone 网页版只给前/后两个摄像头，长焦/超广角苹果不开放给网页，想用长焦请用“系统相机”。</div>
     </div>
   </div>
 
@@ -189,12 +199,12 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory } from '@capacitor/filesystem'
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera'
-import { CameraPreview } from '@capacitor-community/camera-preview'
+import { GszdCamera2 } from '@gszd/capacitor-camera2'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { pushBackOverlay, removeBackOverlay, clearBackOverlays } from '../utils/backstack.js'
 import { getPosition, watchPosition, wgs84ToGcj02, reverseGeocode, toDMS, formatTime, withTimeout, getCachedAddress, saveCachedAddress, distMeters, loadLastFix } from '../utils/geo.js'
 import { drawWatermark, drawVideoFrame, burnPhotoWatermark, canvasToThumbDataUrl, centerCropRect, MAX_EDGE, JPEG_QUALITY } from '../utils/watermark.js'
-import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, uid, getWatermarkText, getWatermarkOpacity, deleteAppFile, backfillRecordsAddress } from '../utils/store.js'
+import { getLastProject, setLastProject, getProjectHistory, loadRecords, saveRecords, saveToAppStorage, saveToGallery, copyCacheFileToData, uid, getWatermarkText, getWatermarkOpacity, deleteAppFile, backfillRecordsAddress } from '../utils/store.js'
 import { focusInputAtEnd } from '../utils/keyboard.js'
 
 const emit = defineEmits(['saved', 'open-settings'])
@@ -276,24 +286,57 @@ const addrState = ref('idle')
 let lastAddrCoords = null // { lon, lat }：当前显示地址所对应的 GCJ-02 坐标，移动超 500 米才重新取地址
 const nowText = ref(formatTime())
 
-// ---- 原生相机预览（v3.0.0，@capacitor-community/camera-preview 7.0.5）----
+// ---- 原生相机预览（v3.1.0，自研 @gszd/capacitor-camera2，Android Camera2）----
 // 拍照模式在原生端走原生预览（toBack，WebView 背景透明，HTML 浮层在上）；
 // 录像模式保留网页路线（水印要逐帧烧进 canvas，原生录像是无水印 mp4）。
-// 插件 API（已核实 dist/esm/definitions.d.ts + 官方 README + Android 源码）：
-//  - start({ position, x, y, width, height, toBack, enableZoom, disableExifHeaderStripping, lockAndroidOrientation })
-//    x/y/宽高按 DIP（CSS 像素）传，插件内部再转物理像素；start 在首帧出来后才 resolve，
-//    10 秒无首帧或重复 start 会 reject；
-//  - capture({ quality }) → { value: base64 }；flip() 前后切换；
+// 插件 API（见 plugins/capacitor-camera2/src/definitions.d.ts）：
+//  - startPreview({ cameraId, facing, x, y, width, height, toBack, enableZoom,
+//    lockAndroidOrientation, captureWidth, captureHeight }) → 首帧出来后 resolve，
+//    返回 { cameraId, facing, type, label, focalLengthMm, zoomRatioRange, exposureCompensationRange }；
+//    x/y/宽高按 DIP（CSS 像素）传；captureWidth/Height 是拍照目标尺寸（3:4 → 1800×2400）；
+//  - capture({ quality }) → { path, width, height }：JPEG 直接写缓存根目录，不走 base64；
+//  - switchCamera({ cameraId / facing }) 前后切换或指定镜头；listCameras() 列全部镜头
+//    （主摄/超广角/长焦/前置，按等效焦距分类）；setZoomRatio({ zoomRatio }) 滑动变焦；
 //    getSupportedFlashModes() → { result: [] }；setFlashMode({ flashMode })，
-//    不支持的模式会 reject（先读支持列表再设）；stop()；isCameraStarted()；
-//  - 没有 getZoom/setZoom：变焦只有 enableZoom 的双指捏合（Android 源码里插件把
-//    WebView 的触摸事件转发给原生预览，toBack 下捏合也能用，见 setupBroadcast）；
-//  - startRecordVideo/stopRecordVideo 存在但出的是无水印 mp4，录像不用它。
+//    不支持的模式会 reject（先读支持列表再设）；stopPreview()；isPreviewStarted()；
+//    tapToFocus({ x, y })；setExposureCompensation({ value })；
+//  - 启动竞态由插件处理：stopPreview() 会主动 reject 掉还没出首帧的 start 调用，
+//    所以 v3.0.3 的手动 stop 标记不再需要；
+//  - iOS 只有占位（方法全部 reject），起不来时 startPhotoCamera 退回网页路线。
 const isNative = Capacitor.isNativePlatform()
 const nativeActive = ref(false) // 原生预览正在跑（拍照模式 + 原生端）
 const nativeFlashModes = ref([]) // 插件报的支持的闪光灯模式
 let nativeStarting = false
-let nativeStopRequested = false // 停用时启动还在进行：启动完成时看到这个标记就自己停掉，不激活
+// 原生镜头列表（v3.1.0）：GszdCamera2.listCameras() 的结果，作为镜头面板的数据源
+// （替代 enumerateDevices 的 cameras；网页取景仍用 cameras）。
+const gszdCameras = ref([]) // [{ id, facing, type, label, focalLengthMm, zoomRatioRange, ... }]
+const gszdCameraId = ref(localStorage.getItem('fw_gszd_camera_id') || '')
+let gszdCamerasLoading = false
+// 插件 facing（front/back）和 App facing（user/environment）的互转
+function gszdFacingToApp(f) { return f === 'front' ? 'user' : 'environment' }
+function appFacingToGszd(f) { return f === 'user' ? 'front' : 'back' }
+// startPreview / switchCamera 的返回值：镜头 id 存起来下次接着用，
+// 前后方向、变焦范围、曝光范围写进现成的 facing / zoomCaps / expCaps。
+function applyGszdStartResult(res) {
+  if (!res) return
+  if (res.cameraId) {
+    gszdCameraId.value = res.cameraId
+    try { localStorage.setItem('fw_gszd_camera_id', res.cameraId) } catch { /* ignore */ }
+  }
+  if (res.facing) facing.value = gszdFacingToApp(res.facing)
+  if (res.zoomRatioRange) zoomCaps.value = { min: res.zoomRatioRange.min, max: res.zoomRatioRange.max, step: 0.1 }
+  if (res.exposureCompensationRange) expCaps.value = { min: res.exposureCompensationRange.min, max: res.exposureCompensationRange.max, step: res.exposureCompensationRange.step || 0.1 }
+}
+async function refreshGszdCameras(force = false) {
+  if (gszdCamerasLoading) return
+  if (!force && gszdCameras.value.length) return
+  gszdCamerasLoading = true
+  try {
+    const { cameras } = await GszdCamera2.listCameras()
+    gszdCameras.value = cameras || []
+  } catch { gszdCameras.value = [] }
+  finally { gszdCamerasLoading = false }
+}
 
 let toastTimer = null
 let recTimer = null
@@ -378,7 +421,6 @@ function openSettings() { emit('open-settings') }
 async function startNativePreview() {
   if (nativeActive.value || nativeStarting) return false
   nativeStarting = true
-  nativeStopRequested = false
   camError.value = ''
   camStarting.value = true
   try {
@@ -390,33 +432,34 @@ async function startNativePreview() {
     const h = Math.round(rect && rect.height ? rect.height : window.innerHeight)
     const x = Math.round(rect ? rect.left : 0)
     const y = Math.round(rect ? rect.top : 0)
-    await CameraPreview.start({
-      position: facing.value === 'user' ? 'front' : 'rear',
+    // 拍照目标尺寸（v3.1.0）：startPreview 时就传进去，capture() 按这个尺寸拍满分辨率
+    const targetRatio = (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
+    const { width: capW, height: capH } = captureSizeForRatio(targetRatio)
+    // 先读镜头列表（有缓存跳过）：存的镜头 id 还在列表里就指定它开，不在就按前后方向让插件选默认镜头
+    await refreshGszdCameras()
+    const savedId = gszdCameraId.value
+    const cameraId = savedId && gszdCameras.value.some((c) => c.id === savedId) ? savedId : undefined
+    const res = await GszdCamera2.startPreview({
+      cameraId,
+      facing: appFacingToGszd(facing.value),
       x, y, width: w, height: h,
       toBack: true,
-      enableZoom: true, // 双指捏合变焦（插件把 WebView 触摸转发给原生预览，toBack 下也可用）
-      disableAudio: true,
-      disableExifHeaderStripping: false, // 插件自己按 EXIF 转正像素，省得各端解码表现不一
+      enableZoom: true, // 双指捏合变焦（插件原生处理）
       lockAndroidOrientation: true,
-      storeToFile: true // v3.0.3 提速：capture() 直接写缓存文件、返回路径，不再走 base64 过桥
+      captureWidth: capW,
+      captureHeight: capH
     })
-    // 启动期间有人要求停（比如切到相册）：刚起就停掉，不激活、不把 body 变透明
-    if (nativeStopRequested) {
-      nativeStopRequested = false
-      try { await CameraPreview.stop() } catch { /* 停不掉也认了，启动方已放弃 */ }
-      nativeActive.value = false
-      camStarting.value = false
-      nativeStarting = false
-      try { document.body.classList.remove('native-preview') } catch { /* ignore */ }
-      return false
-    }
+    // 插件的启动竞态由它自己处理：stopPreview() 会 reject 掉还没出首帧的 start，
+    // 走到这里就是正常启动成功（启动期间被停会直接抛错进 catch，不会误激活）
+    applyGszdStartResult(res)
+    zoom.value = 1
     nativeActive.value = true
     camOk.value = true
     camStarting.value = false
     nativeStarting = false
     try {
-      const res = await CameraPreview.getSupportedFlashModes()
-      nativeFlashModes.value = (res && res.result) || []
+      const fm = await GszdCamera2.getSupportedFlashModes()
+      nativeFlashModes.value = (fm && fm.result) || []
     } catch { nativeFlashModes.value = [] }
     await applyNativeFlashMode()
     return true
@@ -424,20 +467,19 @@ async function startNativePreview() {
     nativeActive.value = false
     camStarting.value = false
     nativeStarting = false
-    nativeStopRequested = false
     return false
   }
 }
 async function stopNativePreview() {
-  // 标记“有人要停”：如果启动还在进行，startNativePreview 完成时会看到这个标记、
-  // 自己把刚起的相机停掉，不激活；这里先把 nativeActive 置 false、去掉透明背景。
-  nativeStopRequested = true
-  if (!nativeActive.value && !nativeStarting) { nativeStopRequested = false; return }
+  // v3.1.0：启动竞态由插件处理（stopPreview 会 reject 掉还没出首帧的 start），
+  // 这里不用再记 stop 标记；先把 nativeActive 置 false、去掉透明背景。
+  if (!nativeActive.value && !nativeStarting) return
   nativeActive.value = false
-  try { await CameraPreview.stop() } catch { /* 已经停了 */ }
+  try { await GszdCamera2.stopPreview() } catch { /* 已经停了 */ }
   try { document.body.classList.remove('native-preview') } catch { /* ignore */ }
 }
 // 原生预览的闪光灯：按支持列表设，自动→auto（不支持退 on）、常开→torch（不支持退 on）、关闭→off
+// v3.1.0：新插件里 on/auto 只影响拍照那一帧（自动补光），torch 才常亮；want 映射逻辑不用改。
 async function applyNativeFlashMode() {
   if (!nativeActive.value) return
   const supported = nativeFlashModes.value || []
@@ -446,10 +488,10 @@ async function applyNativeFlashMode() {
   if (flashMode.value === 'auto') want = has('auto') ? 'auto' : (has('on') ? 'on' : 'off')
   else if (flashMode.value === 'on') want = has('torch') ? 'torch' : (has('on') ? 'on' : 'off')
   try {
-    await CameraPreview.setFlashMode({ flashMode: want })
+    await GszdCamera2.setFlashMode({ flashMode: want })
     flashOn.value = want === 'torch'
   } catch {
-    try { await CameraPreview.setFlashMode({ flashMode: 'off' }) } catch { /* ignore */ }
+    try { await GszdCamera2.setFlashMode({ flashMode: 'off' }) } catch { /* ignore */ }
     flashOn.value = false
   }
 }
@@ -662,18 +704,38 @@ function synthesizeCamerasFromTrack() {
   ]
 }
 function isCameraActive(c) {
+  if (c.id) return gszdCameraId.value === c.id // v3.1.0 原生镜头
   if (c.deviceId) return cameraId.value === c.deviceId
   return facing.value === c.facing
+}
+// v3.1.0 原生镜头在面板里的一行：标签 + 焦距 + 变焦范围（如“后置 · 超广角 · 13mm · 0.5×–10×”）
+function gszdCameraLabel(c) {
+  let s = c.label || ''
+  if (c.focalLengthMm) s += ` · ${c.focalLengthMm}mm`
+  if (c.zoomRatioRange) s += ` · ${formatZoom(c.zoomRatioRange.min)}–${formatZoom(c.zoomRatioRange.max)}`
+  return s
 }
 // 面板里点一个摄像头：有 deviceId 按 deviceId 切；没有（合成条目）按前后方向切。
 function switchCamera(c) {
   if (!c) return
+  if (c.id) return switchCameraById(c.id) // v3.1.0 原生镜头（GszdCamera2.listCameras）
   if (c.deviceId) return switchCameraById(c.deviceId)
   return switchCameraByFacing(c.facing)
 }
 // 没有可用 deviceId 时按前后方向切镜头（清掉存的 deviceId，约束里只用 facingMode）。
 async function switchCameraByFacing(f) {
-  if (nativeActive.value) { showLensPanel.value = false; return } // 原生预览下镜头面板不开，切镜头用“更多”里的前后切换
+  if (nativeActive.value) {
+    // v3.1.0：原生预览下按前后方向切镜头
+    try {
+      const res = await GszdCamera2.switchCamera({ facing: appFacingToGszd(f) })
+      applyGszdStartResult(res)
+      zoom.value = 1
+    } catch (e) {
+      showToast('切换镜头失败：' + (e && e.message ? e.message : e))
+    }
+    showLensPanel.value = false
+    return
+  }
   cameraId.value = ''
   try { localStorage.removeItem('fw_camera_device') } catch { /* ignore */ }
   facing.value = f
@@ -682,7 +744,11 @@ async function switchCameraByFacing(f) {
   await startCamera()
 }
 // 打开镜头面板时重读一次摄像头列表（启动时那次可能正好拿到空列表，面板里要能补上）。
-watch(showLensPanel, (open) => { if (open && !cameras.value.length) listCameras() })
+watch(showLensPanel, (open) => {
+  if (!open) return
+  if (nativeActive.value) refreshGszdCameras()
+  else if (!cameras.value.length) listCameras()
+})
 // 原生预览开/关时切换 WebView 透明背景（插件把预览放 WebView 之后，body 渐变背景必须透明才透得出来）
 watch(nativeActive, (on) => {
   try { document.body.classList.toggle('native-preview', on) } catch { /* ignore */ }
@@ -745,7 +811,7 @@ async function applyZoom(z) {
   if (!ok) {
     // 变焦失败不把流搞崩：倍数回到之前的值，界面不显示一个实际没生效的倍数
     zoom.value = prev
-    readTrackCaps()
+    if (!nativeActive.value) readTrackCaps() // 原生预览没有视频轨，别让 readTrackCaps 把插件的 zoomCaps 清掉
   }
 }
 // 拖动/捏合里调变焦共用：先试 applyConstraints，成功才算数；失败回滚到上次成功的倍数，
@@ -753,6 +819,17 @@ async function applyZoom(z) {
 let zoomBroken = false
 let zoomLastGood = 1
 async function tryApplyZoom(z) {
+  // v3.1.0：原生预览下变焦走插件（setZoomRatio，滑动变焦），不走视频轨
+  if (nativeActive.value) {
+    try {
+      const res = await GszdCamera2.setZoomRatio({ zoomRatio: z })
+      zoom.value = res && typeof res.zoomRatio === 'number' ? res.zoomRatio : z
+      zoomLastGood = zoom.value
+      return true
+    } catch {
+      return false
+    }
+  }
   if (zoomBroken) return false
   const track = stream.value && stream.value.getVideoTracks()[0]
   if (!track || track.readyState !== 'live') return false
@@ -784,9 +861,9 @@ let zoomLongTimer = null
 let zoomPressState = null // { startY, startZoom, active, lastApplied }
 let zoomSuppressClick = false
 function onZoomPressStart(e) {
-  if (nativeActive.value) { zoomPressState = null; return } // 原生预览：捏合变焦，不走长按滑动
-  // 长按时先重读一次能力（刚换镜头、或之前没读到时这里能补上）
-  readTrackCaps()
+  // v3.1.0：原生预览也走长按滑动变焦（调插件 setZoomRatio，取景器捏合是另一路），
+  // 变焦范围用 startPreview 返回的 zoomCaps；网页路线才重读视频轨能力。
+  if (!nativeActive.value) readTrackCaps()
   const caps = zoomCaps.value
   if (!caps) { zoomPressState = null; return } // 实在没有变焦能力：纯点按
   zoomPressState = { startY: e.clientY, startZoom: zoom.value, active: false, lastApplied: zoom.value }
@@ -802,7 +879,7 @@ function onZoomPressStart(e) {
 }
 function onZoomPressMove(e) {
   if (!zoomPressState || !zoomPressState.active) return
-  if (zoomBroken) return
+  if (!nativeActive.value && zoomBroken) return // 网页路线变焦失败后同一手势不再反复试；原生走插件，不受 zoomBroken 影响
   const dy = zoomPressState.startY - e.clientY // 上滑为正（放大）
   const caps = zoomCaps.value
   if (!caps) return
@@ -832,10 +909,10 @@ function onZoomPressEnd() {
 function onZoomBtnClick() {
   if (zoomSuppressClick) { zoomSuppressClick = false; return }
   if (nativeActive.value) {
-    // v3.0.2：原生预览点按变焦按钮 = 切换前后镜头（CameraPreview.flip()）。
-    // 插件没有多镜头选择接口（只有 position front/rear + flip），超广角/长焦选不了；
-    // 要选具体镜头走网页取景的镜头面板（点一下在网页取景下打开）或系统相机。
-    toggleFacing()
+    // v3.1.0：原生预览点按变焦按钮 = 打开镜头面板（主摄/超广角/长焦/前置随便点），
+    // 前后切换挪到“更多”菜单（moreToggleFacing）。v3.0.2 是点按切换前后镜头，
+    // 那时插件没有多镜头接口；现在 Camera2 插件列得出全部镜头，不用再绕路。
+    showLensPanel.value = true
     return
   }
   showLensPanel.value = true
@@ -1144,7 +1221,20 @@ async function flashForCapture() {
   return true
 }
 async function switchCameraById(id) {
-  if (nativeActive.value) { showLensPanel.value = false; return } // 原生预览下镜头面板不开，切镜头用“更多”里的前后切换
+  if (nativeActive.value) {
+    // v3.1.0：原生预览下镜头面板就是 GszdCamera2.listCameras() 的结果，
+    // 点一行直接切到那个镜头（插件自己重开会话，不用 startCamera）
+    if (!id) { showLensPanel.value = false; return }
+    try {
+      const res = await GszdCamera2.switchCamera({ cameraId: id })
+      applyGszdStartResult(res)
+      zoom.value = 1
+    } catch (e) {
+      showToast('切换镜头失败：' + (e && e.message ? e.message : e))
+    }
+    showLensPanel.value = false
+    return
+  }
   if (id) cameraId.value = id
   try { localStorage.setItem('fw_camera_device', cameraId.value) } catch {}
   const hit = cameras.value.find((c) => c.deviceId === cameraId.value)
@@ -1192,10 +1282,10 @@ async function switchMode(m) {
 }
 async function toggleFacing() {
   if (nativeActive.value) {
-    // 原生预览：插件 flip() 前后切换（等新镜头出首帧才 resolve）
+    // 原生预览：GszdCamera2.switchCamera({}) 无参数 = 前后翻转（等新镜头出首帧才 resolve）
     try {
-      await CameraPreview.flip()
-      facing.value = facing.value === 'environment' ? 'user' : 'environment'
+      const res = await GszdCamera2.switchCamera({})
+      applyGszdStartResult(res)
       zoom.value = 1
     } catch (e) {
       showToast('切换前后镜头失败：' + (e && e.message ? e.message : e))
@@ -1257,7 +1347,7 @@ async function resumeCameraIfNeeded() {
       // 预览还活着就不动；先问插件一句首帧还在不在——系统相机回来/切后台回来后
       // 表面可能被系统收走了（v2.1.8 用户反馈的“回来卡住”），死了就强制重开
       try {
-        const { value } = await CameraPreview.isCameraStarted()
+        const { value } = await GszdCamera2.isPreviewStarted()
         if (value) return
       } catch { return }
       await stopNativePreview()
@@ -1483,39 +1573,65 @@ function refreshWmText() {
   wmOpacity.value = getWatermarkOpacity()
 }
 
-async function persistRecord({ type, blob, fileName, meta, thumb, mime, origBlob, origFileName }) {
+async function persistRecord({ type, blob, fileName, meta, thumb, mime, origBlob, origFile, origFileName, deferGallery }) {
   const saved = await saveToAppStorage(blob, fileName)
   // 无水印原图（仅照片）：另存一份 _orig.jpg 在 App 内，不进相册；
   // 详情页连点 7 次编辑文字时，用它重新烧水印替换（老照片没存原图的无法编辑）。
-  // v3.0.3 提速：原图保存和系统相册保存并行做，不再串行等（原图只服务于 7 击编辑，但别丢）。
+  // v3.1.0：原图直接用拍摄文件（不重新编码）：把缓存里的拍摄文件拷到 App 内，
+  // 拷完调用方再删临时文件；拷失败退回原图缺失（照片本身不受影响，编辑文字会提示）。
   let origPath = ''
-  let gal = { where: 'app-only', reason: '' }
-  const jobs = []
-  if (origBlob && origFileName) {
-    jobs.push((async () => {
-      try {
-        const origSaved = await saveToAppStorage(origBlob, origFileName)
-        origPath = origSaved.path
-      } catch { /* 原图存失败不阻塞主照片 */ }
-    })())
+  if (origFile && origFileName) {
+    try {
+      origPath = await copyCacheFileToData(origFile, origFileName)
+    } catch { /* 原图拷贝失败不阻塞主照片 */ }
+  } else if (origBlob && origFileName) {
+    try {
+      const origSaved = await saveToAppStorage(origBlob, origFileName)
+      origPath = origSaved.path
+    } catch { /* 原图存失败不阻塞主照片 */ }
   }
-  jobs.push((async () => {
-    gal = await saveToGallery({ fileUri: saved.uri, isVideo: type === 'video' })
-  })())
-  await Promise.all(jobs)
+  const recId = uid()
+  // v3.1.0 提速：系统相册同步放后台——App 内已存好就立刻建记录、回界面继续拍，
+  // 不等 MediaStore 慢慢写；写完后把记录的相册状态补上（失败则保持“仅 App 内”，详情页会写清楚）。
+  // 只在原生端 defer：网页版本来就没有系统相册，saveToGallery 立刻返回，不用 defer。
+  const useDefer = !!deferGallery && Capacitor.isNativePlatform()
+  const saveGallery = () => saveToGallery({ fileUri: saved.uri, isVideo: type === 'video' })
+    .catch(() => ({ where: 'app-only', reason: '相册保存失败，仅保存在 App 内，可用分享导出' }))
+  let gal = { where: 'app-only', reason: useDefer ? '正在同步到系统相册…' : '' }
+  if (!useDefer) {
+    gal = await saveGallery()
+  }
   const rec = {
-    id: uid(), type, project: meta.project, time: meta.time,
+    id: recId, type, project: meta.project, time: meta.time,
     // 注意：meta.lon/meta.lat 在拍摄时已是 GCJ-02（currentMeta 用 gcjLon/gcjLat），记录直接存 GCJ-02；
     // meta.lon/meta.lat 在拍摄时已是 GCJ-02，记录直接存 GCJ-02。
     lon: meta.lon, lat: meta.lat, gcjLon: meta.lon, gcjLat: meta.lat, address: meta.address,
     path: saved.path, uri: saved.uri, thumb: thumb || '',
     origPath,
-    gallery: gal.where, galleryNote: gal.reason || gal.note || '', mime: mime || blob.type
+    gallery: gal.where, galleryNote: gal.reason || gal.note || '', galleryPending: useDefer, mime: mime || blob.type
   }
   const list = loadRecords()
   list.unshift(rec)
   saveRecords(list)
   emit('saved', rec)
+  if (useDefer) {
+    // 后台写相册：写完更新记录的相册状态（再发一次 fw-records-changed 让相册页刷新）
+    saveGallery().then((g) => {
+      const l2 = loadRecords()
+      const hit = l2.find((x) => x.id === recId)
+      if (!hit) return
+      hit.galleryPending = false
+      if (g && g.ok) {
+        hit.gallery = g.where
+        hit.galleryNote = g.reason || g.note || ''
+      } else {
+        hit.gallery = 'app-only'
+        hit.galleryNote = (g && g.reason) || '相册保存失败，仅保存在 App 内，可用分享导出'
+      }
+      saveRecords(l2)
+      try { window.dispatchEvent(new Event('fw-records-changed')) } catch { /* ignore */ }
+    }).catch(() => {})
+  }
   return rec
 }
 
@@ -1541,7 +1657,7 @@ function captureSizeForRatio(targetRatio) {
   if (targetRatio >= 1) return { width: LONG, height: Math.round(LONG / targetRatio) }
   return { width: Math.round(LONG * targetRatio), height: LONG }
 }
-// capture() 的返回值：storeToFile 开着时是缓存文件路径，否则是 base64。
+// capture() 的返回值：Camera2 插件返回缓存文件路径，系统相机/网页路线是 base64。
 // 文件路径转成 WebView 能加载的地址给烧水印用；base64 拼成 dataURL。
 function captureValueToSrc(value) {
   if (!value) return ''
@@ -1550,7 +1666,7 @@ function captureValueToSrc(value) {
   }
   return `data:image/jpeg;base64,${value}`
 }
-// storeToFile 的临时文件用完就删（缓存目录，删失败也不影响，系统会清）
+// capture() 的临时文件用完就删（缓存目录，删失败也不影响，系统会清）
 async function deleteCaptureTempFile(value) {
   if (!value || !(value.startsWith('/') || value.startsWith('file://'))) return
   const name = value.split('/').pop()
@@ -1559,24 +1675,30 @@ async function deleteCaptureTempFile(value) {
 }
 // 原生预览拍照：capture() 取图 → 同一套 canvas 烧水印流程保存（和系统相机路径一致）
 // v3.0.3 提速：拍照不等定位（用当前 currentMeta() 快照直接拍，地址后台补）；
-// capture() 走 storeToFile（文件路径，不走 base64）+ 传目标宽高；
-// 烧水印只做 2 次整图编码，原图直接拿 Blob，缩略图复用同一块 canvas。
+// v3.1.0 提速：Camera2 插件拍照直接写文件（不走 base64），拍照尺寸在 startPreview 时已传进去，
+// 这里不再传宽高；拍摄文件本身就是无水印原图，尺寸对得上时直接拿它当原图（省一次整图编码），
+// 系统相册同步放后台，App 内一存好立刻就能继续拍。
 async function takeNativePhoto() {
   const meta = currentMeta()
   const targetRatio = (RATIO_OPTIONS.find((r) => r.label === ratio.value) || RATIO_OPTIONS[0]).value
-  const { width: capW, height: capH } = captureSizeForRatio(targetRatio)
   let captureValue = ''
   try {
-    const res = await CameraPreview.capture({ quality: 90, width: capW, height: capH })
-    if (!res || !res.value) { showToast('拍照失败：没拿到照片'); return }
-    captureValue = res.value
+    const res = await GszdCamera2.capture({ quality: 90 })
+    if (!res || !res.path) { showToast('拍照失败：没拿到照片'); return }
+    captureValue = res.path
     const src = captureValueToSrc(captureValue)
-    const { blob, rawBlob, thumb } = await burnPhotoWatermark(src, meta, targetRatio)
-    // 烧完水印临时文件就没用了，删掉（失败也不影响）
-    deleteCaptureTempFile(captureValue)
+    const { blob, rawBlob, thumb, origReused } = await burnPhotoWatermark(src, meta, targetRatio, { origFileDims: { width: res.width, height: res.height } })
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob: rawBlob, origFileName: `GSZD_${ts}_orig.jpg` })
+    const rec = await persistRecord({
+      type: 'photo', blob, fileName, meta, thumb,
+      origBlob: origReused ? null : rawBlob,
+      origFile: origReused ? captureValue : '',
+      origFileName: `GSZD_${ts}_orig.jpg`,
+      deferGallery: true // v3.1.0 提速：相册同步放后台，App 内一存好立刻就能继续拍
+    })
+    // 烧完水印、原图拷完后临时文件就没用了，删掉（失败也不影响）
+    deleteCaptureTempFile(captureValue)
     await afterPhotoSaved({ rec })
   } catch (e) {
     deleteCaptureTempFile(captureValue)
@@ -1609,7 +1731,7 @@ async function takePhotoWeb() {
     const thumb = canvasToThumbDataUrl(rawCanvas)
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg` })
+    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob, origFileName: `GSZD_${ts}_orig.jpg`, deferGallery: true })
     // 拍照后不弹分享、不跳预览页，留在拍摄界面直接继续拍
     await afterPhotoSaved({ rec })
   } catch (e) {
@@ -1638,6 +1760,7 @@ async function afterPhotoSaved({ rec }) {
   vibrateOnCapture() // 拍完轻震一下（只在拍照成功后；录像不走这里）
   if (Capacitor.isNativePlatform()) {
     if (rec.gallery === 'gallery') showToast('已保存到相册 ✓，继续拍吧')
+    else if (rec.galleryPending) showToast('已保存 ✓，继续拍吧') // v3.1.0：相册还在后台同步，不谎报失败
     else showToast('已存 App 内，相册保存失败（可在相册里分享导出）')
     return
   }
@@ -1660,7 +1783,7 @@ async function systemCamera(source) {
     const ts = meta.time.replace(/[-: ]/g, '')
     const fileName = `GSZD_${ts}.jpg`
     // 无水印原图：burnPhotoWatermark 直接给的 rawBlob（已按比例裁剪、已缩放）
-    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob: rawBlob, origFileName: `GSZD_${ts}_orig.jpg` })
+    const rec = await persistRecord({ type: 'photo', blob, fileName, meta, thumb, origBlob: rawBlob, origFileName: `GSZD_${ts}_orig.jpg`, deferGallery: true })
     // 系统相机拍照同样不跳预览页，留在拍摄界面；照片同时进相册
     await afterPhotoSaved({ rec })
   } catch (e) {

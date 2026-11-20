@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "@capacitor-community/camera-preview": "^7.0.5",
     "@capacitor-community/file-opener": "^7.0.1",
     "@capacitor-community/media": "^8.0.1",
     "@capacitor/android": "^7.6.10",
@@ -11,6 +10,7 @@
     "@capacitor/haptics": "^7.0.5",
     "@capacitor/ios": "^7.6.10",
     "@capacitor/share": "^7.0.2",
+    "@gszd/capacitor-camera2": "file:plugins/capacitor-camera2",
     "@jwot/capacitor-apkupdater": "^0.0.2",
     "vue": "^3.5.13"
   },
@@ -36,5 +36,5 @@
     "verify:pwa": "node scripts/verify-pwa.mjs"
   },
   "type": "module",
-  "version": "3.0.3"
+  "version": "3.1.0"
 }

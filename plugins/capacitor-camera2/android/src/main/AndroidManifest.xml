@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The CAMERA permission itself is declared by the app's own manifest
+         (see field-watermark-app/android-manifest/AndroidManifest.xml); the
+         plugin only declares it as a Capacitor permission alias in code. -->
+</manifest>
