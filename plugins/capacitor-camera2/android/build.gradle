@@ -15,7 +15,9 @@ buildscript {
     }
     dependencies {
         classpath 'com.android.tools.build:gradle:8.7.2'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+        // 注意：buildscript 在文件其余部分之前求值，这里的 $kotlinVersion 还没定义
+        // （下面的 ext 块是主脚本体，buildscript 之后才求值），所以版本号写死。
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21"
     }
 }
 
